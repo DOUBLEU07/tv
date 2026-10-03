@@ -5,7 +5,8 @@ local script = GetCurrentResourceName()
 --@ state (หน่วยความจำอย่างเดียว ไม่ลง database)
 --@ key ของจอ : "m:<hash>:<x>:<y>:<z>" ทีวีในแมพ / "p:<id>" ทีวีที่วางเอง / "f:<id>" จอใส
 --@ ================================================================================================
-local Play = {}         --@ [key] = { media, startAt, vol, by, byIdent, at(os.time) }
+local Play = {}         --@ [key] = { media, startAt, vol, by, byIdent, at(os.time), id, seek }
+local NextPlayId = 1
 local PlayCount = 0
 local Props = {}        --@ [id] = { id, model, x, y, z, h, owner(identifier), ownerName }
 local NextProp = 1
@@ -82,6 +83,13 @@ local function Near(src, pos, dist)
     return p and #(p - pos) <= dist
 end
 
+--@ ระยะคุมทีวี : แอดมินคุมจาก /tvadmin ได้ไกลกว่า
+local function NearTv(src, pos)
+    local dist = Config.InteractDistance + 4.0
+    if IsAdmin(src) then dist = math.max(dist, Config.TV.AdminRange or 0) end
+    return Near(src, pos, dist)
+end
+
 --@ ================================================================================================
 --@ หาจอจาก key (ตำแหน่งจริงสำหรับเช็คระยะ)
 --@ ================================================================================================
@@ -128,13 +136,14 @@ end
 
 local function PublicPlay(state)
     if not state then return nil end
-    return { media = state.media, startAt = state.startAt, vol = state.vol, by = state.by }
+    return { media = state.media, startAt = state.startAt, vol = state.vol, by = state.by, id = state.id, seek = state.seek }
 end
 
 lib.callback.register(script .. ":sv:tvInfo", function(src, key, meta)
     if type(key) ~= "string" then return nil end
     local pos = ScreenPos(key, meta)
-    if not pos or not Near(src, pos, Config.InteractDistance + 4.0) then return nil end
+    IsAdmin(src)
+    if not pos or not NearTv(src, pos) then return nil end
     if Boards[key] then return { board = true } end
 
     local res = {
@@ -156,7 +165,7 @@ end)
 lib.callback.register(script .. ":sv:tvPlay", function(src, key, meta, url, vol)
     if type(key) ~= "string" then return { ok = false, msg = "ไม่พบทีวี" } end
     local pos = ScreenPos(key, meta)
-    if not pos or not Near(src, pos, Config.InteractDistance + 4.0) then return { ok = false, msg = "อยู่ไกลทีวีเกินไป" } end
+    if not pos or not NearTv(src, pos) then return { ok = false, msg = "อยู่ไกลทีวีเกินไป" } end
     if Boards[key] then return { ok = false, msg = "ทีวีนี้เป็นจอวาร์ป" } end
     if not CanControl(src, key) then return { ok = false, msg = "คุณไม่มีสิทธิ์คุมทีวีนี้" } end
     if not RateOk(src, "play", Config.TV.Cooldown) then return { ok = false, msg = "ใจเย็นๆ กดถี่เกินไป" } end
@@ -167,7 +176,10 @@ lib.callback.register(script .. ":sv:tvPlay", function(src, key, meta, url, vol)
 
     local xPlayer = GetX(src)
     vol = math.floor(math.max(0, math.min(100, tonumber(vol) or Config.TV.DefaultVolume)))
+    NextPlayId = NextPlayId + 1
     SetPlay(key, {
+        id = NextPlayId,
+        seek = 0,
         media = media,
         startAt = Now() - (media.s or 0),
         vol = vol,
@@ -179,10 +191,26 @@ lib.callback.register(script .. ":sv:tvPlay", function(src, key, meta, url, vol)
     return { ok = true }
 end)
 
+--@ กรอเวลา : เลื่อน startAt แล้วส่ง state เดิม (id เดิม) ให้ทุกคน จอจะกรอตามโดยไม่โหลดคลิปใหม่
+lib.callback.register(script .. ":sv:tvSeek", function(src, key, meta, pos)
+    local state = type(key) == "string" and Play[key]
+    if not state then return { ok = false, msg = "ทีวีไม่ได้เปิดอยู่" } end
+    if not Shared.CanSeek(state.media) then return { ok = false, msg = "ลิงก์นี้กรอเวลาไม่ได้" } end
+    local p = ScreenPos(key, meta)
+    if not p or not NearTv(src, p) then return { ok = false, msg = "อยู่ไกลทีวีเกินไป" } end
+    if not CanControl(src, key) then return { ok = false, msg = "คุณไม่มีสิทธิ์คุมทีวีนี้" } end
+    if not RateOk(src, "seek", 0.8) then return { ok = false, msg = "ใจเย็นๆ" } end
+    pos = math.max(0, math.min(24 * 3600, tonumber(pos) or 0))
+    state.startAt = Now() - pos
+    state.seek = (state.seek or 0) + 1
+    TriggerClientEvent(script .. ":cl:play", -1, key, PublicPlay(state), Now())
+    return { ok = true }
+end)
+
 lib.callback.register(script .. ":sv:tvStop", function(src, key, meta)
     if type(key) ~= "string" or not Play[key] then return { ok = false, msg = "ทีวีไม่ได้เปิดอยู่" } end
     local pos = ScreenPos(key, meta)
-    if not pos or not Near(src, pos, Config.InteractDistance + 4.0) then return { ok = false, msg = "อยู่ไกลทีวีเกินไป" } end
+    if not pos or not NearTv(src, pos) then return { ok = false, msg = "อยู่ไกลทีวีเกินไป" } end
     if not CanControl(src, key) then return { ok = false, msg = "คุณไม่มีสิทธิ์คุมทีวีนี้" } end
     SetPlay(key, nil)
     Log("stop", src, ("ปิดทีวี `%s`"):format(key))
@@ -193,7 +221,7 @@ lib.callback.register(script .. ":sv:tvVolume", function(src, key, meta, vol)
     local state = type(key) == "string" and Play[key]
     if not state then return { ok = false } end
     local pos = ScreenPos(key, meta)
-    if not pos or not Near(src, pos, Config.InteractDistance + 4.0) then return { ok = false, msg = "อยู่ไกลทีวีเกินไป" } end
+    if not pos or not NearTv(src, pos) then return { ok = false, msg = "อยู่ไกลทีวีเกินไป" } end
     if not CanControl(src, key) then return { ok = false, msg = "คุณไม่มีสิทธิ์คุมทีวีนี้" } end
     if not RateOk(src, "vol", 0.4) then return { ok = false } end
     state.vol = math.floor(math.max(0, math.min(100, tonumber(vol) or state.vol)))
@@ -274,7 +302,7 @@ lib.callback.register(script .. ":sv:propRemove", function(src, id)
     if not p then return { ok = false, msg = "ไม่พบทีวี" } end
     local xPlayer = GetX(src)
     if not IsAdmin(src) and not (xPlayer and xPlayer.identifier == p.owner) then return { ok = false, msg = "ไม่ใช่ทีวีของคุณ" } end
-    if not Near(src, vector3(p.x, p.y, p.z), 8.0) then return { ok = false, msg = "อยู่ไกลทีวีเกินไป" } end
+    if not NearTv(src, vector3(p.x, p.y, p.z)) and not Near(src, vector3(p.x, p.y, p.z), 8.0) then return { ok = false, msg = "อยู่ไกลทีวีเกินไป" } end
     RemoveProp(id)
     Log("remove", src, ("เก็บทีวี #%d"):format(id))
     return { ok = true }
@@ -547,6 +575,45 @@ CreateThread(function()
 end)
 
 --@ ================================================================================================
+--@ ตำแหน่งจอของทีวีแต่ละรุ่น (/tvcalib) : เก็บในไฟล์ calibration.json ในสคริปต์ ไม่ใช่ database
+--@ [tostring(hash)] = { x, y, z, w, h, rot }
+--@ ================================================================================================
+local CALIB_FILE = "calibration.json"
+local Calib = {}
+do
+    local raw = LoadResourceFile(script, CALIB_FILE)
+    if raw and raw ~= "" then
+        local ok, data = pcall(json.decode, raw)
+        if ok and type(data) == "table" then Calib = data end
+    end
+end
+
+local function CleanCalib(c)
+    if type(c) ~= "table" then return nil end
+    local x, y, z, w, h = tonumber(c.x), tonumber(c.y), tonumber(c.z), tonumber(c.w), tonumber(c.h)
+    if not (x and y and z and w and h) then return nil end
+    local function clamp(v, a, b) return math.max(a, math.min(b, v)) end
+    return { x = clamp(x, -20, 20), y = clamp(y, -20, 20), z = clamp(z, -20, 20), w = clamp(w, 0.05, 40), h = clamp(h, 0.05, 40), rot = c.rot == true }
+end
+
+lib.callback.register(script .. ":sv:calibSave", function(src, hash, data)
+    if not IsAdmin(src) then return { ok = false, msg = "เฉพาะแอดมิน" } end
+    hash = tonumber(hash)
+    if not hash or not Shared.Models[Shared.ModelHash(hash)] then return { ok = false, msg = "ไม่รู้จักรุ่นนี้" } end
+    local k = tostring(Shared.ModelHash(hash))
+    local c = nil
+    if data ~= nil then
+        c = CleanCalib(data)
+        if not c then return { ok = false, msg = "ข้อมูลไม่ถูกต้อง" } end
+    end
+    Calib[k] = c
+    SaveResourceFile(script, CALIB_FILE, json.encode(Calib), -1)
+    TriggerClientEvent(script .. ":cl:calib", -1, k, c)
+    Log("board", src, ("%s ตำแหน่งจอรุ่น %s (%s)"):format(c and "จูน" or "รีเซ็ต", Shared.Models[Shared.ModelHash(hash)].model, k))
+    return { ok = true }
+end)
+
+--@ ================================================================================================
 --@ sync ตอนเข้าเกม / รีสคริปต์
 --@ ================================================================================================
 lib.callback.register(script .. ":sv:sync", function(src)
@@ -555,7 +622,7 @@ lib.callback.register(script .. ":sv:sync", function(src)
     for key, st in pairs(Play) do play[key] = PublicPlay(st) end
     local queue = {}
     for group in pairs(Queue) do queue[group] = PruneQueue(group) end
-    return { now = Now(), play = play, props = Props, boards = Boards, queue = queue }
+    return { now = Now(), play = play, props = Props, boards = Boards, queue = queue, calib = Calib }
 end)
 
 AddEventHandler("esx:playerLoaded", function(src, xPlayer)

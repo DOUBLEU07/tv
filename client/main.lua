@@ -127,7 +127,13 @@ local function FullSync()
     for id in pairs(TV.Props) do TV.RemovePropEntity(id) end
     TV.Props = {}
     for id, p in pairs(s.props or {}) do TV.Props[tonumber(id)] = p end
+    TV.Calib = {}
+    for k, c in pairs(s.calib or {}) do TV.SetCalib(k, c) end
 end
+
+RegisterNetEvent(script .. ":cl:calib", function(k, c)
+    TV.SetCalib(k, c)
+end)
 
 RegisterNetEvent(script .. ":cl:play", function(key, state, serverNow)
     SetOffset(serverNow)
@@ -212,6 +218,8 @@ local function RemoteData(key, info)
             provider = Shared.ProviderLabel[media.p] or media.p,
             audio = Shared.AudioControl[media.p],
             by = st.by,
+            canSeek = Shared.CanSeek(media),
+            elapsed = math.max(0, info.now - st.startAt),
         } or nil,
         vol = st and st.vol or info.defaultVolume,
         personal = TV.Personal,
@@ -242,6 +250,38 @@ local function OpenSubmit(key)
     OpenUI("submit", info)
 end
 
+--@ ทีวีรอบตัวสำหรับแท็บแอดมิน (วน object pool เฉพาะตอนแอดมินเปิดแผง)
+local function NearbyTvs()
+    local coords = GetEntityCoords(PlayerPedId())
+    local range = Config.TV.AdminRange
+    local list = {}
+    for _, e in ipairs(GetGamePool("CObject")) do
+        local cfg = Shared.Models[Shared.ModelHash(GetEntityModel(e))]
+        if cfg then
+            local p = GetEntityCoords(e)
+            local d = #(coords - p)
+            if d <= range then
+                local pid = TV.PropByEnt[e]
+                local key = pid and ("p:" .. pid) or Shared.MapKey(GetEntityModel(e), p.x, p.y, p.z)
+                local st = TV.Play[key]
+                local b = TV.Boards[key]
+                list[#list + 1] = {
+                    key = key,
+                    model = cfg.model,
+                    placed = pid ~= nil,
+                    dist = math.floor(d * 10 + 0.5) / 10,
+                    board = b and b.group or nil,
+                    provider = st and st.media and (Shared.ProviderLabel[st.media.p] or st.media.p) or nil,
+                    url = st and st.media and st.media.url or nil,
+                    by = st and st.by or nil,
+                }
+            end
+        end
+    end
+    table.sort(list, function(a, b) return a.dist < b.dist end)
+    return list
+end
+
 function TV.OpenAdmin(tab)
     local res = lib.callback.await(script .. ":sv:admin", false, "list", {})
     if not res or not res.ok then return TV.Notify("error", res and res.msg or "เฉพาะแอดมิน") end
@@ -249,6 +289,8 @@ function TV.OpenAdmin(tab)
     res.tab = tab
     res.duration = Config.Board.Duration
     res.defaultWidth = Config.Board.Free.DefaultWidth
+    res.nearby = NearbyTvs()
+    res.adminRange = Config.TV.AdminRange
     OpenUI("admin", res)
 end
 
@@ -262,6 +304,9 @@ RegisterNUICallback("remote", function(data, cb)
     elseif data.act == "stop" then
         res = lib.callback.await(script .. ":sv:tvStop", false, key, meta)
         if res and not res.ok then TV.Notify("error", res.msg or "ปิดไม่สำเร็จ") end
+    elseif data.act == "seek" then
+        res = lib.callback.await(script .. ":sv:tvSeek", false, key, meta, tonumber(data.pos))
+        if res and not res.ok then TV.Notify("error", res.msg or "กรอไม่สำเร็จ") end
     elseif data.act == "volume" then
         res = lib.callback.await(script .. ":sv:tvVolume", false, key, meta, data.vol)
     elseif data.act == "personal" then
@@ -308,6 +353,13 @@ RegisterNUICallback("admin", function(data, cb)
         end
         payload.key = key
         payload.meta = TV.KeyMeta(key)
+    elseif act == "nearby" then
+        return cb({ ok = true, nearby = NearbyTvs() })
+    elseif act == "control" then
+        CloseUI()
+        cb({ ok = true })
+        OpenRemote(payload.key)
+        return
     elseif act == "goto" then
         local b = TV.Boards[payload.key]
         if b then SetNewWaypoint(b.x, b.y) end

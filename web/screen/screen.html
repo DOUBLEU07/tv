@@ -156,6 +156,7 @@
   var P = null;
   var rev = null;
   var lastDrift = 0;
+  var seekId = 0;
 
   function clearPlayer() {
     if (P && P.destroy) { try { P.destroy(); } catch (e) {} }
@@ -219,12 +220,16 @@
       self.vol = v;
       if (self.ready) { self.yt.setVolume(v); if (v > 0) self.yt.unMute(); }
     };
-    self.sync = function (el) {
-      if (!self.ready || self.ended) return;
+    self.sync = function (el, force) {
+      if (!self.ready) return;
       var d = self.yt.getDuration();
       if (!d) return; // live
-      if (el > d + 1) { self.ended = true; self.yt.stopVideo(); vmsg('จบแล้ว', ''); return; }
-      if (Math.abs(self.yt.getCurrentTime() - el) > 4) self.yt.seekTo(el, true);
+      if (el > d + 1) {
+        if (!self.ended) { self.ended = true; self.yt.stopVideo(); vmsg('จบแล้ว', ''); }
+        return;
+      }
+      if (self.ended) { self.ended = false; vmsg(null); force = true; }
+      if (force || Math.abs(self.yt.getCurrentTime() - el) > 4) { self.yt.seekTo(el, true); self.yt.playVideo(); }
     };
     self.destroy = function () { if (self.yt && self.yt.destroy) self.yt.destroy(); };
     return self;
@@ -249,9 +254,9 @@
       self.vol = v;
       if (self.ready) { self.tw.setVolume(v / 100); self.tw.setMuted(v <= 0); }
     };
-    self.sync = function (el) {
+    self.sync = function (el, force) {
       if (!self.ready || m.ch) return;
-      if (Math.abs(self.tw.getCurrentTime() - el) > 5) self.tw.seek(el);
+      if (force || Math.abs(self.tw.getCurrentTime() - el) > 5) self.tw.seek(el);
     };
     return self;
   };
@@ -297,10 +302,10 @@
       if (!self.fb) return;
       if (v <= 0) self.fb.mute(); else { self.fb.unmute(); self.fb.setVolume(v / 100); }
     };
-    self.sync = function (e) {
+    self.sync = function (e, force) {
       if (!self.fb) return;
       var d = self.fb.getDuration && self.fb.getDuration();
-      if (d && e < d && Math.abs(self.fb.getCurrentPosition() - e) > 5) self.fb.seek(e);
+      if (d && e < d && (force || Math.abs(self.fb.getCurrentPosition() - e) > 5)) { self.fb.seek(e); self.fb.play(); }
     };
     return self;
   };
@@ -339,6 +344,7 @@
     }
     v.addEventListener('loadedmetadata', start, { once: true });
     v.addEventListener('ended', function () { vmsg('จบแล้ว', ''); });
+    v.addEventListener('seeked', function () { if (!v.ended) vmsg(null); });
     v.addEventListener('error', function () { vmsg('เล่นไฟล์นี้ไม่ได้', ''); });
     if (m.hls && !v.canPlayType('application/vnd.apple.mpegurl')) {
       loadScript('https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.7/hls.min.js').then(function () {
@@ -351,9 +357,9 @@
       v.src = m.src;
     }
     self.setAudio = function (x) { v.volume = Math.max(0, Math.min(1, x / 100)); v.muted = x <= 0; };
-    self.sync = function (e) {
-      if (!isFinite(v.duration) || v.ended || e > v.duration) return;
-      if (Math.abs(v.currentTime - e) > 4) v.currentTime = e;
+    self.sync = function (e, force) {
+      if (!isFinite(v.duration) || e > v.duration) return;
+      if (force || Math.abs(v.currentTime - e) > 4) { v.currentTime = e; v.play().catch(function () {}); }
     };
     self.destroy = function () { if (self.hls) self.hls.destroy(); v.pause(); v.removeAttribute('src'); v.load(); };
     return self;
@@ -368,11 +374,15 @@
       if (!make) { vmsg('ไม่รองรับลิงก์นี้', ''); return; }
       P = make(msg.media, msg.elapsed || 0, msg.vol || 0) || {};
       lastDrift = Date.now();
+      seekId = msg.seek || 0;
     }
     if (P && P.setAudio) P.setAudio(msg.vol || 0);
-    if (P && P.sync && Date.now() - lastDrift > 3000) {
+    // มีคนกดกรอ = กรอทันที ; ปกติเช็คเวลาเพี้ยนทุก 3 วิ
+    var forced = (msg.seek || 0) !== seekId;
+    if (P && P.sync && (forced || Date.now() - lastDrift > 3000)) {
       lastDrift = Date.now();
-      try { P.sync(msg.elapsed || 0); } catch (e) {}
+      seekId = msg.seek || 0;
+      try { P.sync(msg.elapsed || 0, forced); } catch (e) {}
     }
   }
 

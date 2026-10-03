@@ -61,7 +61,16 @@ end
 --@ frame = { pos, r(ขวา), f(หน้า), u(บน) } ; จอ = สี่เหลี่ยมบนระนาบ local y
 --@ ================================================================================================
 local DimCache = {}
-TV.CalibOverride = {}   --@ [hash] = screen : place.lua ใช้ตอนจูน
+TV.CalibOverride = {}   --@ [hash] = screen : place.lua ใช้ตอนกำลังจูน (เห็นคนเดียว)
+TV.Calib = {}           --@ [hash] = screen : ค่าที่บันทึกแล้วจากเซิร์ฟ (ทุกคนใช้)
+
+--@ ค่าจากเซิร์ฟ { x, y, z, w, h, rot } -> รูปแบบเดียวกับ screen ใน config
+function TV.SetCalib(hashStr, c)
+    local hash = tonumber(hashStr)
+    if not hash then return end
+    if not c then TV.Calib[hash] = nil return end
+    TV.Calib[hash] = { offset = vector3(c.x + 0.0, c.y + 0.0, c.z + 0.0), width = c.w + 0.0, height = c.h + 0.0, rot90 = c.rot == true }
+end
 
 local function ModelDims(model)
     local d = DimCache[model]
@@ -117,7 +126,7 @@ function TV.TvScreen(ent)
     local model = GetEntityModel(ent)
     local hash = Shared.ModelHash(model)
     local cfg = Shared.Models[hash]
-    local scr = TV.CalibOverride[hash] or (cfg and cfg.screen)
+    local scr = TV.CalibOverride[hash] or TV.Calib[hash] or (cfg and cfg.screen)
     local fr = EntityFrame(ent)
     if scr then
         if scr.rot90 then fr = Rot90(fr) end
@@ -214,7 +223,8 @@ local function VideoMessage(key, st, now, dist)
     local vol = (st.vol or 0) * (TV.Personal / 100.0) * fall
     return {
         t = "video",
-        rev = key .. "|" .. (st.media.url or "") .. "|" .. string.format("%.1f", st.startAt),
+        rev = key .. "|" .. tostring(st.id),
+        seek = st.seek or 0,
         media = st.media,
         elapsed = math.max(0.0, now - st.startAt),
         vol = math.floor(vol + 0.5),

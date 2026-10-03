@@ -16,6 +16,12 @@ Shared.AudioControl = {
     direct = "volume",
 }
 
+--@ กรอเวลาได้ (ไลฟ์ / TikTok / Kick / Twitch clip กรอไม่ได้)
+local SEEKABLE = { youtube = true, twitch = true, facebook = true, direct = true }
+function Shared.CanSeek(media)
+    return media ~= nil and SEEKABLE[media.p] == true and not media.live
+end
+
 Shared.ProviderLabel = {
     youtube = "YouTube",
     twitch = "Twitch",

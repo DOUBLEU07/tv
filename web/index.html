@@ -60,6 +60,19 @@
           <span class="chip"><iconify-icon icon="simple-icons:kick"></iconify-icon>Kick</span>
         </div>
 
+        <template v-if="d.playing && d.playing.canSeek">
+          <label class="lbl">ตำแหน่งคลิป (ทุกคนบนจอนี้กรอตาม) <b>{{ clock(pos) }}</b></label>
+          <div class="row seek">
+            <button class="btn sm" @click="seekBy(-30)" :disabled="busy">-30</button>
+            <button class="btn sm" @click="seekBy(-10)" :disabled="busy">-10</button>
+            <button class="btn sm" @click="seekBy(10)" :disabled="busy">+10</button>
+            <button class="btn sm" @click="seekBy(30)" :disabled="busy">+30</button>
+            <input class="inp sm" v-model.trim="seekText" placeholder="1:23" maxlength="8" @keydown.enter="seekTo">
+            <button class="btn sm" @click="seekTo" :disabled="busy || !parseClock(seekText)"><iconify-icon icon="mdi:skip-next"></iconify-icon>ไปที่</button>
+          </div>
+          <p class="note">ข้ามโฆษณาไม่ได้ (ปุ่ม Skip เป็นของ YouTube) แต่กรอหลังโฆษณาจบได้</p>
+        </template>
+
         <label class="lbl">เสียงทีวี (ทุกคนได้ยินเท่านี้) <b>{{ vol }}%</b></label>
         <input type="range" class="range" min="0" max="100" v-model.number="vol" @change="setVol" :disabled="!d.playing">
       </template>
@@ -111,6 +124,26 @@
       <div class="tabs">
         <div class="tab" :class="{ active: tab === 'pending' }" @click="setTab('pending')">รออนุมัติ <b>{{ d.pending.length }}</b></div>
         <div class="tab" :class="{ active: tab === 'boards' }" @click="setTab('boards')">จอวาร์ป <b>{{ d.boards.length }}</b></div>
+        <div class="tab" :class="{ active: tab === 'nearby' }" @click="setTab('nearby')">ทีวีใกล้ตัว <b>{{ (d.nearby || []).length }}</b></div>
+      </div>
+
+      <div class="list" v-if="tab === 'nearby'">
+        <div class="create-row">
+          <span class="note">ทีวีในระยะ {{ d.adminRange }} เมตร · กดคุม = เปิดรีโมทได้เลยไม่ต้องเดินไป · จูนตำแหน่งจอใช้ /tvcalib</span>
+          <div class="grow"></div>
+          <button class="btn sm" @click="admin('nearby', {})" :disabled="busy"><iconify-icon icon="mdi:refresh"></iconify-icon>รีเฟรช</button>
+        </div>
+        <div class="empty" v-if="!(d.nearby || []).length">ไม่มีทีวีในระยะ</div>
+        <div class="brd" v-for="t in d.nearby" :key="t.key">
+          <iconify-icon class="brd-ico" :icon="t.provider ? 'mdi:television-play' : 'mdi:television'" :class="{ off: !t.provider }"></iconify-icon>
+          <div class="brd-info">
+            <p><b>{{ t.model }}</b> <span class="dim">{{ t.dist }} ม.{{ t.placed ? ' · วางเอง' : '' }}</span></p>
+            <p class="dim" v-if="t.board">จอวาร์ป #{{ t.board }}</p>
+            <p class="dim" v-else-if="t.provider">{{ t.provider }} · {{ t.by }} · {{ t.url }}</p>
+            <p class="dim" v-else>ปิดอยู่</p>
+          </div>
+          <button class="btn primary sm" v-if="!t.board" @click="admin('control', { key: t.key })" :disabled="busy"><iconify-icon icon="mdi:remote-tv"></iconify-icon>คุม</button>
+        </div>
       </div>
 
       <div class="list" v-if="tab === 'pending'">

@@ -234,7 +234,10 @@ RegisterCommand(Config.Command.Calibrate, function()
     local hash = Shared.ModelHash(GetEntityModel(ent))
     local cfg = Shared.Models[hash]
     local fr, cx, y, cz, w, h, _, rot = TV.TvScreen(ent)
-    local s = { offset = vector3(cx, y, cz), width = w, height = h, rot90 = rot }
+    --@ ถ้าเคยจูนแล้วเริ่มจากค่าเดิม (offset.y ตามที่บันทึก ไม่ใช่ฝั่งที่ยืน)
+    local saved = TV.Calib[hash] or cfg.screen
+    local s = saved and { offset = saved.offset, width = saved.width, height = saved.height, rot90 = saved.rot90 == true }
+        or { offset = vector3(cx, y, cz), width = w, height = h, rot90 = rot }
     TV.CalibOverride[hash] = s
 
     Begin()
@@ -244,7 +247,8 @@ RegisterCommand(Config.Command.Calibrate, function()
         "Q / E = หน้า/หลัง",
         "ลูกกลิ้ง = กว้าง   PgUp / PgDn = สูง",
         "G = หมุนจอ 90°   Shift = ละเอียด",
-        "Enter = print config   Backspace = ออก",
+        "Enter = บันทึก (ทีวีรุ่นนี้ทุกเครื่อง ทุกคนเห็นทันที)",
+        "Delete = กลับเป็นค่าอัตโนมัติ   Backspace = ยกเลิก",
     })
 
     while true do
@@ -253,6 +257,7 @@ RegisterCommand(Config.Command.Calibrate, function()
         DisableControlAction(0, 10, true)
         DisableControlAction(0, 11, true)
         DisableControlAction(0, 47, true)
+        DisableControlAction(0, 178, true)
         if Pressed(47) then s.rot90 = not s.rot90 end
         local st = Shift() and 0.002 or 0.01
         local o = s.offset
@@ -272,17 +277,23 @@ RegisterCommand(Config.Command.Calibrate, function()
         local a, b, c, d = TV.Corners(f2, x2, y2, z2, w2, h2, side)
         Outline(a, b, c, d, 255, 180, 40)
 
-        if Pressed(191) then
-            local line = ('{ model = "%s", screen = { offset = vector3(%.3f, %.3f, %.3f), width = %.3f, height = %.3f%s } },')
-                :format(cfg.model, s.offset.x, s.offset.y, s.offset.z, s.width, s.height, s.rot90 and ", rot90 = true" or "")
-            print("^2[bit_tv]^7 ก๊อปไปแทนบรรทัดรุ่นนี้ใน Config.TV.Models :")
-            print(line)
-            TV.Notify("success", "print config ลง F8 แล้ว")
+        if Pressed(191) or Pressed(178) then
+            local data = nil
+            if Pressed(191) then
+                data = { x = s.offset.x, y = s.offset.y, z = s.offset.z, w = s.width, h = s.height, rot = s.rot90 == true }
+            end
+            local res = lib.callback.await(script .. ":sv:calibSave", false, hash, data)
+            if res and res.ok then
+                TV.Notify("success", data and ("บันทึกจอรุ่น " .. cfg.model .. " แล้ว") or "กลับเป็นค่าอัตโนมัติแล้ว")
+                break
+            end
+            TV.Notify("error", res and res.msg or "บันทึกไม่สำเร็จ")
         elseif Pressed(194) or Pressed(202) then
             break
         end
         if not DoesEntityExist(ent) then break end
         Wait(0)
     end
+    TV.CalibOverride[hash] = nil
     Finish()
 end, false)

@@ -33,6 +33,10 @@ var app = new Vue({
         url: '',
         vol: 60,
         personal: 70,
+        pos: 0,
+        posBase: 0,
+        posAt: 0,
+        seekText: '',
         // submit
         form: { img: '', text: '', ig: '', fb: '', tt: '' },
         imgOk: true,
@@ -75,6 +79,8 @@ var app = new Vue({
                 this.url = '';
                 this.vol = this.d.vol != null ? this.d.vol : 60;
                 this.personal = this.d.personal != null ? this.d.personal : 70;
+                this.seekText = '';
+                this.syncPos();
             } else if (mode === 'submit') {
                 this.form = { img: '', text: '', ig: '', fb: '', tt: '' };
                 this.imgOk = true;
@@ -104,7 +110,35 @@ var app = new Vue({
             });
         },
 
-        // remote
+        // remote : เวลาคลิปเดินเองฝั่ง UI จาก elapsed ที่เซิร์ฟให้มา
+        syncPos: function () {
+            var p = this.d.playing;
+            this.posBase = p ? (p.elapsed || 0) : 0;
+            this.posAt = Date.now();
+            this.pos = this.posBase;
+        },
+        tickPos: function () {
+            if (this.visible && this.mode === 'remote' && this.d.playing) this.pos = this.posBase + (Date.now() - this.posAt) / 1000;
+        },
+        clock: function (s) {
+            s = Math.max(0, Math.floor(s || 0));
+            var h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60;
+            var mm = (h > 0 && m < 10 ? '0' : '') + m, ss = (x < 10 ? '0' : '') + x;
+            return (h > 0 ? h + ':' : '') + mm + ':' + ss;
+        },
+        parseClock: function (t) {
+            if (!t || !/^\d+(:\d{1,2}){0,2}$/.test(t)) return null;
+            var parts = t.split(':').map(Number), s = 0;
+            parts.forEach(function (n) { s = s * 60 + n; });
+            return { s: s };
+        },
+        seekBy: function (d) { this.call('remote', { act: 'seek', pos: Math.max(0, this.pos + d) }); },
+        seekTo: function () {
+            var c = this.parseClock(this.seekText);
+            if (!c) return;
+            var self = this;
+            this.call('remote', { act: 'seek', pos: c.s }).then(function (res) { if (res.ok) self.seekText = ''; });
+        },
         play: function () {
             if (!this.url) return;
             var self = this;
@@ -123,9 +157,10 @@ var app = new Vue({
             var self = this;
             this.call('admin', { act: act, payload: payload }).then(function (res) {
                 if (res.ok && res.pending) {
-                    var tab = self.tab;
                     self.d = Object.assign({}, self.d, { pending: res.pending, boards: res.boards });
-                    self.tab = tab;
+                }
+                if (res.ok && res.nearby) {
+                    self.d = Object.assign({}, self.d, { nearby: res.nearby });
                 }
             });
         },
@@ -142,9 +177,12 @@ window.addEventListener('message', function (e) {
     else if (m.action === 'update') {
         app.d = m.data;
         app.vol = m.data.vol != null ? m.data.vol : app.vol;
+        app.syncPos();
     }
     else if (m.action === 'hint') app.hint = m.lines;
 });
+
+setInterval(function () { app.tickPos(); }, 500);
 
 window.addEventListener('keydown', function (e) {
     if (e.key === 'Escape' && app.visible) app.close();
@@ -157,10 +195,14 @@ window.addEventListener('keydown', function (e) {
     document.body.style.background = '#2b3240 url(https://picsum.photos/1600/900?blur=3) center/cover';
     var post1 = { img: 'https://picsum.photos/400', text: 'ร้านเหล้าเปิดแล้ว มาดื่มกันคืนนี้!', ig: 'somchai.bit', fb: 'Somchai Jaidee', tt: '' };
     var data = {
-        remote: { canControl: true, canRemove: true, playing: { provider: 'YouTube', url: 'https://www.youtube.com/watch?v=jfKfPfyJRdk', audio: 'volume', by: 'Somchai' }, vol: 60, personal: 70 },
+        remote: { canControl: true, canRemove: true, playing: { provider: 'YouTube', url: 'https://www.youtube.com/watch?v=jfKfPfyJRdk', audio: 'volume', by: 'Somchai', canSeek: true, elapsed: 83 }, vol: 60, personal: 70 },
         submit: { group: 'bar_a', price: 5000, queue: 2, wait: 24, duration: 15, limits: { text: 80, name: 30, img: 600 } },
         admin: { pending: [{ id: 1, group: 'bar_a', name: 'Somchai', paid: 5000, post: post1 }, { id: 2, group: 'club', name: 'Nida', paid: 0, post: { img: 'https://picsum.photos/401', text: '', ig: '', fb: '', tt: 'nida.dance' } }],
-                 boards: [{ key: 'f:1', group: 'bar_a', kind: 'free', x: 120.5, y: -1290.2, z: 29.3, queue: 2 }, { key: 'm:12345:1.0:2.0:3.0', group: 'bar_a', kind: 'tv', x: 1, y: 2, z: 3, queue: 2 }], defaultWidth: 2.4 },
+                 boards: [{ key: 'f:1', group: 'bar_a', kind: 'free', x: 120.5, y: -1290.2, z: 29.3, queue: 2 }, { key: 'm:12345:1.0:2.0:3.0', group: 'bar_a', kind: 'tv', x: 1, y: 2, z: 3, queue: 2 }], defaultWidth: 2.4,
+                 adminRange: 25, tab: (location.search.match(/tab=(\w+)/) || [])[1],
+                 nearby: [{ key: 'm:1', model: 'apa_mp_h_str_avunitl_01_b', dist: 2.3, provider: 'YouTube', by: 'Somchai', url: 'https://www.youtube.com/watch?v=jfKfPfyJRdk' },
+                          { key: 'p:4', model: 'prop_tv_flat_01', dist: 8.1, placed: true },
+                          { key: 'm:2', model: 'prop_tv_flat_michael', dist: 14.6, board: 'bar_a' }] },
         place: { models: [{ model: 'prop_tv_flat_01', label: 'ทีวีจอแบน 1' }, { model: 'prop_tv_flat_02', label: 'ทีวีจอแบน 2' }, { model: 'prop_tv_flat_michael', label: 'ทีวีจอใหญ่' }, { model: 'prop_huge_display_01', label: 'จอยักษ์' }] }
     };
     if (demo === 'hint') { app.hint = ['<b>วางจอใส</b> กลุ่ม: bar_a', 'เมาส์ = เล็งตำแหน่ง', 'ลูกกลิ้ง = หมุน (Shift = ละเอียด)', '↑ ↓ = ยก/ลด   ← → = ขนาด', 'Enter = วาง   Backspace = ยกเลิก']; return; }

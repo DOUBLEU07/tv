@@ -74,6 +74,9 @@ iconify-icon { display: inline-flex; }
 .range::-webkit-slider-thumb { -webkit-appearance: none; width: 18px; height: 18px; border-radius: 50%; background: var(--accent); cursor: pointer; box-shadow: 0 0 0 4px rgba(13, 207, 199, 0.2); }
 .range:disabled { opacity: 0.4; }
 
+.seek .btn { flex: 0 0 auto; }
+.inp.sm { height: 34px; flex: 1 1 60px; }
+
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .chip { font-size: 12px; color: var(--ink-dim); padding: 3px 9px; border-radius: 999px; background: var(--bg-2); display: inline-flex; align-items: center; gap: 4px; }
 
@@ -133,6 +136,7 @@ iconify-icon { display: inline-flex; }
 .create-row .inp { height: 34px; }
 .brd { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-radius: 12px; background: var(--bg-2); box-shadow: inset 0 0 0 1px var(--line); }
 .brd-ico { font-size: 24px; color: var(--accent); }
+.brd-ico.off { color: var(--ink-dim); }
 .brd-info { flex: 1 1 auto; min-width: 0; }
 .brd-info p { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 14px; }
 
