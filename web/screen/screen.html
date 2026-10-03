@@ -185,14 +185,24 @@
 
   var Players = {};
 
-  Players.youtube = function (m, elapsed, vol) {
+  Players.youtube = function (m, elapsed, vol, msg) {
+    // ytSmall = ความกว้างตัวเล่นจริง (px) : ตัวเล่นเล็ก = YouTube ไม่ยิงโฆษณา แล้วใช้ CSS ขยายภาพให้เต็มจอ
+    var small = msg && msg.ytSmall > 0 ? Math.min(1280, Math.floor(msg.ytSmall)) : 0;
+    var pw = small || 1280, ph = Math.round(pw * 9 / 16);
     var div = document.createElement('div');
     div.id = 'yt-' + Date.now();
-    $('player').appendChild(div);
+    if (small) {
+      var wrap = document.createElement('div');
+      wrap.style.cssText = 'position:absolute;left:0;top:0;width:' + pw + 'px;height:' + ph + 'px;transform-origin:0 0;transform:scale(' + (1280 / pw) + ');';
+      wrap.appendChild(div);
+      $('player').appendChild(wrap);
+    } else {
+      $('player').appendChild(div);
+    }
     var self = { yt: null, ready: false, vol: vol, ended: false };
     function ytReady() {
       self.yt = new YT.Player(div.id, {
-        width: 1280, height: 720, videoId: m.id,
+        width: pw, height: ph, videoId: m.id,
         playerVars: { autoplay: 1, controls: 0, disablekb: 1, fs: 0, iv_load_policy: 3, modestbranding: 1, rel: 0, playsinline: 1, start: Math.floor(elapsed) },
         events: {
           onReady: function (e) {
@@ -377,7 +387,7 @@
       rev = msg.rev;
       var make = Players[msg.media.p];
       if (!make) { vmsg('ไม่รองรับลิงก์นี้', ''); return; }
-      P = make(msg.media, msg.elapsed || 0, msg.vol || 0) || {};
+      P = make(msg.media, msg.elapsed || 0, msg.vol || 0, msg) || {};
       lastDrift = Date.now();
       seekId = msg.seek || 0;
     }
@@ -493,7 +503,7 @@
     onBoard({ t: 'board', rev: demo, post: demo === 'empty' ? null : post, remain: 11, dur: 15, next: 3, price: 5000, kind: demo === 'free' ? 'free' : 'tv' });
     if (demo === 'free') document.body.style.background = 'url(https://picsum.photos/1280/720?blur=2) center/cover';
   } else if (demo === 'yt') {
-    onVideo({ t: 'video', rev: 'demo', media: { p: 'youtube', id: 'jfKfPfyJRdk' }, elapsed: 0, vol: 30 });
+    onVideo({ t: 'video', rev: 'demo', media: { p: 'youtube', id: 'jfKfPfyJRdk' }, elapsed: 0, vol: 30, ytSmall: (location.search.match(/small=([0-9]+)/) || [])[1] * 1 || 0 });
   }
 })();
 </script>

@@ -241,7 +241,7 @@ local function OpenRemote(key)
     local info = lib.callback.await(script .. ":sv:tvInfo", false, key, meta)
     if not info then return TV.Notify("error", "เปิดทีวีนี้ไม่ได้") end
     if info.board then return end
-    current = { key = key, meta = meta, mode = "remote" }
+    current = { key = key, meta = meta, mode = "remote", canControl = info.canControl }
     OpenUI("remote", RemoteData(key, info))
 end
 
@@ -309,9 +309,10 @@ RegisterNUICallback("remote", function(data, cb)
     local key, meta = current.key, current.meta
     local res = { ok = true }
     if data.act == "touch" then
+        local mirror = current.canControl == true
         CloseUI()
         cb({ ok = true })
-        TV.Touch(key)
+        TV.Touch(key, mirror)
         return
     elseif data.act == "play" then
         res = lib.callback.await(script .. ":sv:tvPlay", false, key, meta, data.url, data.vol)

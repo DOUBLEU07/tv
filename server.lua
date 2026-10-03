@@ -192,6 +192,20 @@ lib.callback.register(script .. ":sv:tvPlay", function(src, key, meta, url, vol)
 end)
 
 --@ กรอเวลา : เลื่อน startAt แล้วส่ง state เดิม (id เดิม) ให้ทุกคน จอจะกรอตามโดยไม่โหลดคลิปใหม่
+--@ คลิกบนจอ (แตะจอ) ของคนที่คุมทีวีได้ -> กดตำแหน่งเดียวกันบนจอของทุกคนที่ดูอยู่ (เช่น Skip โฆษณาพร้อมกัน)
+--@ ไม่มี callback ตอบกลับ ; กันรัวด้วย RateOk
+RegisterNetEvent(script .. ":sv:click", function(key, meta, u, v)
+    local src = source
+    if type(key) ~= "string" or not Play[key] then return end
+    u, v = tonumber(u), tonumber(v)
+    if not u or not v or u < 0 or u > 1 or v < 0 or v > 1 then return end
+    local p = ScreenPos(key, meta)
+    if not p or not NearTv(src, p) then return end
+    if not CanControl(src, key) then return end
+    if not RateOk(src, "click", 0.4) then return end
+    TriggerClientEvent(script .. ":cl:click", -1, key, u, v, src)
+end)
+
 lib.callback.register(script .. ":sv:tvSeek", function(src, key, meta, pos)
     local state = type(key) == "string" and Play[key]
     if not state then return { ok = false, msg = "ทีวีไม่ได้เปิดอยู่" } end

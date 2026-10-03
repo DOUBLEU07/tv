@@ -244,15 +244,31 @@ local function HitScreen(tl, tr, br, bl)
     return u, v, p
 end
 
-function TV.Touch(key)
+--@ คนที่คุมทีวีได้คลิก -> จอของเรากดตำแหน่งเดียวกันด้วย
+RegisterNetEvent(script .. ":cl:click", function(key, u, v, from)
+    if from == GetPlayerServerId(PlayerId()) then return end
+    local dui = TV.ActiveDui(key)
+    if not dui then return end
+    local res = TV.Resolution
+    local x, y = math.floor(u * res.w), math.floor(v * res.h)
+    SendDuiMouseMove(dui, x, y)
+    SendDuiMouseDown(dui, "left")
+    Wait(60)
+    SendDuiMouseUp(dui, "left")
+end)
+
+--@ mirror = true : คนนี้คุมทีวีได้ คลิกจะถูกส่งไปกดบนจอของทุกคนที่ดูอยู่ด้วย
+function TV.Touch(key, mirror)
     if TV.Busy then return end
     Begin()
     TV.Hint({
         "<b>แตะจอ</b>",
         "เล็งจุดสีบนจอ แล้วคลิกซ้าย = กด (เช่น Skip โฆษณา)",
+        mirror and "<b>คลิกของคุณจะกดบนจอของทุกคนที่ดูอยู่ด้วย</b>" or "คลิกมีผลเฉพาะจอของคุณ",
         "ลูกกลิ้ง = เลื่อนในจอ",
         "คลิกขวา / Backspace = ออก",
     })
+    local meta = TV.KeyMeta(key)
     local res = TV.Resolution
     local down = false
     while true do
@@ -272,6 +288,7 @@ function TV.Touch(key)
             if Pressed(24) then
                 SendDuiMouseDown(dui, "left")
                 down = true
+                if mirror then TriggerServerEvent(script .. ":sv:click", key, meta, u, v) end
             end
             if Pressed(14) then SendDuiMouseWheel(dui, -120, 0) end
             if Pressed(15) then SendDuiMouseWheel(dui, 120, 0) end
