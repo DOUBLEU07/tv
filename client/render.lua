@@ -230,6 +230,7 @@ local function VideoMessage(key, st, now, dist)
         elapsed = math.max(0.0, now - st.startAt),
         vol = math.floor(vol + 0.5),
         audio = Shared.AudioControl[st.media.p],
+        info = st.media.ao and TV.MusicInfo[key .. "|" .. tostring(st.id)] or nil,
     }
 end
 
@@ -237,6 +238,34 @@ end
 --@ เลือกจอที่จะวาด (ทุก 250ms)
 --@ ================================================================================================
 local Draw = {}         --@ list ที่ thread วาดใช้ : { key, slot }
+local MusicOn = {}      --@ [key] = true : ทีวีโหมดเพลงที่หน้า UI หลักกำลังเล่นเสียงอยู่
+local MUSIC_MAX = 3     --@ เล่นเพลงพร้อมกันได้กี่เครื่อง (ใกล้สุดก่อน)
+
+--@ โหมดเพลง : เสียงเล่นในหน้า UI หลัก (web/music.js) ไม่ใช่ใน DUI ของจอ (DUI โดนโฆษณา)
+local function MusicTick(cand, now)
+    local want, n = {}, 0
+    for _, c in ipairs(cand) do
+        if n >= MUSIC_MAX then break end
+        if c.st and c.st.media.ao and c.d <= Config.Audio.MaxDistance then
+            n = n + 1
+            want[c.key] = true
+            local st = c.st
+            SendNUIMessage({
+                action = "music",
+                key = c.key,
+                rev = c.key .. "|" .. tostring(st.id),
+                id = st.media.id,
+                elapsed = math.max(0.0, now - st.startAt),
+                vol = math.floor((st.vol or 0) * (TV.Personal / 100.0) * Falloff(c.d) + 0.5),
+                seek = st.seek or 0,
+            })
+        end
+    end
+    for key in pairs(MusicOn) do
+        if not want[key] then SendNUIMessage({ action = "musicStop", key = key }) end
+    end
+    MusicOn = want
+end
 
 CreateThread(function()
     local lastIdle = 0
@@ -262,6 +291,7 @@ CreateThread(function()
             if d <= Config.Render.Distance then cand[#cand + 1] = { key = key, d = d, board = b } end
         end
         table.sort(cand, function(a, b) return a.d < b.d end)
+        MusicTick(cand, now)
 
         local want = {}
         local list = {}

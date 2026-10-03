@@ -214,6 +214,22 @@ RegisterNUICallback("duration", function(data, cb)
     cb(true)
 end)
 
+--@ โหมดเพลง : หน้า UI หลัก (web/music.js) บอกชื่อเพลง/ความยาว [rev] = { title, author, d, error }
+TV.MusicInfo = {}
+RegisterNUICallback("musicInfo", function(data, cb)
+    if type(data) == "table" and type(data.rev) == "string" then
+        local d = tonumber(data.d) or 0
+        TV.MusicInfo[data.rev] = {
+            title = type(data.title) == "string" and data.title:sub(1, 200) or "",
+            author = type(data.author) == "string" and data.author:sub(1, 120) or "",
+            d = d,
+            error = data.error == true,
+        }
+        if d > 0 then TV.Duration[data.rev] = d end
+    end
+    cb(true)
+end)
+
 local function RemoteData(key, info)
     local st = info.play
     local media = st and st.media

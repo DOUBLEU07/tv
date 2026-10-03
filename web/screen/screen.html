@@ -231,45 +231,43 @@
     return el;
   }
 
-  Players.youtube = function (m, elapsed, vol, msg) {
-    var music = m.ao === true;
-    var pw = music ? 0 : 1280, ph = music ? 0 : 720;
+  // โหมดเพลง : จอโชว์การ์ดอย่างเดียว เสียงเล่นในหน้า UI หลักของสคริปต์ (web/music.js)
+  // เวลา/ชื่อเพลงมาจาก msg.elapsed + msg.info ทุก 250ms
+  function musicCard(m) {
+    var view = musicView(m);
+    $('player').appendChild(view);
+    var shown = '';
+    return {
+      tick: function (msg) {
+        var info = msg.info;
+        var key = info ? (info.title + '|' + info.author) : '';
+        if (key !== shown && info) {
+          shown = key;
+          view.querySelector('.mtitle').textContent = info.title || 'YouTube';
+          view.querySelector('.mauthor').textContent = info.author || '';
+        }
+        var d = info && info.d > 0 ? info.d : 0;
+        var el = Math.max(0, msg.elapsed || 0);
+        var over = d > 0 && el > d + 1;
+        view.querySelector('.mbar i').style.width = (d > 0 ? Math.min(100, el / d * 100) : 0) + '%';
+        var t = view.querySelectorAll('.mtime span');
+        t[0].textContent = clockText(d > 0 ? Math.min(el, d) : el);
+        t[1].textContent = d > 0 ? clockText(d) : (info ? 'LIVE' : '');
+        view.classList.toggle('paused', !info || info.error || over || msg.vol <= 0);
+        if (over && shown.indexOf('|END') < 0) { shown += '|END'; view.querySelector('.mlabel').lastChild.textContent = 'จบแล้ว'; }
+      }
+    };
+  }
+
+  Players.youtube = function (m, elapsed, vol) {
+    if (m.ao === true) return musicCard(m);
     var div = document.createElement('div');
     div.id = 'yt-' + Date.now();
-    var view = null;
-    if (music) {
-      // ตัวเล่นมองไม่เห็น : ห่อด้วยกล่อง 0x0 (style ในบรรทัดชนะกฎ #player > div ที่บังคับเต็มจอ)
-      var wrap = document.createElement('div');
-      wrap.style.cssText = 'position:absolute;left:0;top:0;width:0;height:0;overflow:hidden;';
-      wrap.appendChild(div);
-      view = musicView(m);
-      $('player').appendChild(view);
-      $('player').appendChild(wrap);
-    } else {
-      $('player').appendChild(div);
-    }
-    var self = { yt: null, ready: false, vol: vol, ended: false, tick: null };
-    function updateView() {
-      if (!view || !self.ready) return;
-      var d = self.yt.getDuration() || 0, c = self.yt.getCurrentTime() || 0;
-      view.querySelector('.mbar i').style.width = (d > 0 ? Math.min(100, c / d * 100) : 0) + '%';
-      var t = view.querySelectorAll('.mtime span');
-      t[0].textContent = clockText(c);
-      t[1].textContent = d > 0 ? clockText(d) : 'LIVE';
-      view.classList.toggle('paused', self.yt.getPlayerState() !== 1);
-      // ชื่อเพลงบางทียังไม่มาตอน onReady : ดึงซ้ำจนได้
-      if (!self.titled) {
-        var vd = (self.yt.getVideoData && self.yt.getVideoData()) || {};
-        if (vd.title) {
-          self.titled = true;
-          view.querySelector('.mtitle').textContent = vd.title;
-          view.querySelector('.mauthor').textContent = vd.author || '';
-        }
-      }
-    }
+    $('player').appendChild(div);
+    var self = { yt: null, ready: false, vol: vol, ended: false };
     function ytReady() {
       self.yt = new YT.Player(div.id, {
-        width: pw, height: ph, videoId: m.id,
+        width: 1280, height: 720, videoId: m.id,
         playerVars: { autoplay: 1, controls: 0, disablekb: 1, fs: 0, iv_load_policy: 3, modestbranding: 1, rel: 0, playsinline: 1, start: Math.floor(elapsed) },
         events: {
           onReady: function (e) {
@@ -277,13 +275,6 @@
             e.target.unMute();
             e.target.setVolume(self.vol);
             e.target.playVideo();
-            if (view) {
-              var vd = (e.target.getVideoData && e.target.getVideoData()) || {};
-              view.querySelector('.mtitle').textContent = vd.title || 'YouTube';
-              self.titled = !!vd.title;
-              view.querySelector('.mauthor').textContent = vd.author || '';
-              self.tick = setInterval(updateView, 500);
-            }
           },
           onStateChange: function (e) {
             if (e.data === 0) { self.ended = true; vmsg('จบแล้ว', ''); }
@@ -317,7 +308,7 @@
       if (force || Math.abs(self.yt.getCurrentTime() - el) > 4) { self.yt.seekTo(el, true); self.yt.playVideo(); }
     };
     self.duration = function () { return self.ready ? self.yt.getDuration() : 0; };
-    self.destroy = function () { clearInterval(self.tick); if (self.yt && self.yt.destroy) self.yt.destroy(); };
+    self.destroy = function () { if (self.yt && self.yt.destroy) self.yt.destroy(); };
     return self;
   };
 
@@ -473,6 +464,7 @@
       seekId = msg.seek || 0;
       try { P.sync(msg.elapsed || 0, forced); } catch (e) {}
     }
+    if (P && P.tick) P.tick(msg);
     reportDuration();
   }
 
@@ -577,7 +569,8 @@
     onBoard({ t: 'board', rev: demo, post: demo === 'empty' ? null : post, remain: 11, dur: 15, next: 3, price: 5000, kind: demo === 'free' ? 'free' : 'tv' });
     if (demo === 'free') document.body.style.background = 'url(https://picsum.photos/1280/720?blur=2) center/cover';
   } else if (demo === 'yt') {
-    onVideo({ t: 'video', rev: 'demo', media: { p: 'youtube', id: (location.search.match(/id=([\w-]+)/) || [])[1] || 'jfKfPfyJRdk', ao: /music=1/.test(location.search) }, elapsed: 0, vol: 30 });
+    var demoMedia = { p: 'youtube', id: (location.search.match(/id=([\w-]+)/) || [])[1] || 'jfKfPfyJRdk', ao: /music=1/.test(location.search) };
+    onVideo({ t: 'video', rev: 'demo', media: demoMedia, elapsed: 81, vol: 30, info: demoMedia.ao ? { title: 'DAY ONE | MINNIE (G)I-DLE x TorSaksit (Piano & i Live)', author: 'TorBright Channel', d: 213 } : null });
   }
 })();
 </script>

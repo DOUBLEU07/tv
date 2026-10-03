@@ -54,7 +54,7 @@
         </div>
         <label class="check" :class="{ on: music }" @click.prevent="music = !music">
           <span class="box"><iconify-icon icon="mdi:check" v-if="music"></iconify-icon></span>
-          <iconify-icon icon="mdi:music"></iconify-icon>เปิดเป็นเพลง (YouTube · ไม่มีภาพ ไม่มีโฆษณา)
+          <iconify-icon icon="mdi:music"></iconify-icon>เปิดเป็นเพลง (YouTube · โชว์หน้าเพลงแทนวิดีโอ)
         </label>
         <div class="chips">
           <span class="chip"><iconify-icon icon="mdi:youtube"></iconify-icon>YouTube</span>
@@ -218,6 +218,7 @@
   </div>
   </transition>
 </div>
+<script src="music.js"></script>
 <script src="ui.js"></script>
 </body>
 </html>
