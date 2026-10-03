@@ -1,5 +1,6 @@
 local script = GetCurrentResourceName()
 local PAGE = Config.ScreenPage or ("nui://" .. script .. "/web/screen/screen.html")
+PAGE = PAGE .. (PAGE:find("?", 1, true) and "&" or "?") .. "res=" .. script
 local RES = Config.Render.Resolution
 
 --@ ================================================================================================
@@ -310,6 +311,20 @@ CreateThread(function()
         end
     end
 end)
+
+--@ ให้โหมดแตะจอ (place.lua) ใช้
+function TV.ActiveDui(key)
+    local s = Active[key]
+    return s and s.dui or nil
+end
+
+function TV.ScreenCornersOf(key)
+    local fr, cx, y, cz, w, h, side = ScreenOf(key)
+    if not fr then return nil end
+    return TV.Corners(fr, cx, y, cz, w, h, side)
+end
+
+TV.Resolution = RES
 
 AddEventHandler("onResourceStop", function(res)
     if res ~= script then return end

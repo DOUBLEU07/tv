@@ -222,6 +222,73 @@ function TV.PlaceBoard(group, width)
 end
 
 --@ ================================================================================================
+--@ แตะจอ : เล็งที่จอแล้วคลิก = คลิกในเบราว์เซอร์ของจอ (กด Skip โฆษณา / ปุ่มในตัวเล่น)
+--@ มีผลกับจอในเครื่องตัวเองเท่านั้น (โฆษณาแต่ละคนก็ไม่เหมือนกันอยู่แล้ว)
+--@ ================================================================================================
+local function Dot(a, b) return a.x * b.x + a.y * b.y + a.z * b.z end
+local function Cross(a, b) return vector3(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x) end
+
+--@ ยิงเส้นจากกล้องไปชนจอ -> u, v (0-1) และจุดชน
+local function HitScreen(tl, tr, br, bl)
+    local o, dir = GetGameplayCamCoord(), CamDir()
+    local ex, ey = tr - tl, bl - tl
+    local n = Cross(ex, ey)
+    local den = Dot(dir, n)
+    if math.abs(den) < 1e-6 then return nil end
+    local t = Dot(tl - o, n) / den
+    if t <= 0 or t > 30.0 then return nil end
+    local p = o + dir * t
+    local d = p - tl
+    local u, v = Dot(d, ex) / Dot(ex, ex), Dot(d, ey) / Dot(ey, ey)
+    if u < 0 or u > 1 or v < 0 or v > 1 then return nil end
+    return u, v, p
+end
+
+function TV.Touch(key)
+    if TV.Busy then return end
+    Begin()
+    TV.Hint({
+        "<b>แตะจอ</b>",
+        "เล็งจุดสีบนจอ แล้วคลิกซ้าย = กด (เช่น Skip โฆษณา)",
+        "ลูกกลิ้ง = เลื่อนในจอ",
+        "คลิกขวา / Backspace = ออก",
+    })
+    local res = TV.Resolution
+    local down = false
+    while true do
+        BlockControls()
+        DisablePlayerFiring(PlayerId(), true)
+        local dui = TV.ActiveDui(key)
+        local tl, tr, br, bl = TV.ScreenCornersOf(key)
+        if not dui or not tl then
+            TV.Notify("error", "จออยู่ไกลเกินไป")
+            break
+        end
+        local u, v, p = HitScreen(tl, tr, br, bl)
+        if u then
+            local x, y = math.floor(u * res.w), math.floor(v * res.h)
+            SendDuiMouseMove(dui, x, y)
+            DrawMarker(28, p.x, p.y, p.z, 0, 0, 0, 0, 0, 0, 0.025, 0.025, 0.025, 13, 207, 199, 230, false, false, 2, false, nil, nil, false)
+            if Pressed(24) then
+                SendDuiMouseDown(dui, "left")
+                down = true
+            end
+            if Pressed(14) then SendDuiMouseWheel(dui, -120, 0) end
+            if Pressed(15) then SendDuiMouseWheel(dui, 120, 0) end
+        end
+        if down and IsDisabledControlJustReleased(0, 24) then
+            SendDuiMouseUp(dui, "left")
+            down = false
+        end
+        if Pressed(25) or Pressed(194) or Pressed(202) then break end
+        Wait(0)
+    end
+    local dui = TV.ActiveDui(key)
+    if down and dui then SendDuiMouseUp(dui, "left") end
+    Finish()
+end
+
+--@ ================================================================================================
 --@ จูนตำแหน่งจอของทีวีแต่ละรุ่น (แอดมิน) -> print บรรทัด config
 --@ ================================================================================================
 RegisterCommand(Config.Command.Calibrate, function()

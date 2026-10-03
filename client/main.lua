@@ -205,6 +205,15 @@ RegisterNUICallback("close", function(_, cb)
     cb(true)
 end)
 
+--@ ความยาวคลิป (วินาที) ที่จอในเครื่องเรารายงานมา [rev] = วินาที ; rev = key|playId
+TV.Duration = {}
+RegisterNUICallback("duration", function(data, cb)
+    if type(data) == "table" and type(data.rev) == "string" and tonumber(data.d) then
+        TV.Duration[data.rev] = tonumber(data.d)
+    end
+    cb(true)
+end)
+
 local function RemoteData(key, info)
     local st = info.play
     local media = st and st.media
@@ -220,6 +229,7 @@ local function RemoteData(key, info)
             by = st.by,
             canSeek = Shared.CanSeek(media),
             elapsed = math.max(0, info.now - st.startAt),
+            duration = TV.Duration[key .. "|" .. tostring(st.id)],
         } or nil,
         vol = st and st.vol or info.defaultVolume,
         personal = TV.Personal,
@@ -298,7 +308,12 @@ RegisterNUICallback("remote", function(data, cb)
     if not current or current.mode ~= "remote" then return cb({ ok = false }) end
     local key, meta = current.key, current.meta
     local res = { ok = true }
-    if data.act == "play" then
+    if data.act == "touch" then
+        CloseUI()
+        cb({ ok = true })
+        TV.Touch(key)
+        return
+    elseif data.act == "play" then
         res = lib.callback.await(script .. ":sv:tvPlay", false, key, meta, data.url, data.vol)
         if res and not res.ok then TV.Notify("error", res.msg or "เปิดไม่สำเร็จ") end
     elseif data.act == "stop" then

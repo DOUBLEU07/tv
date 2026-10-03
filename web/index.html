@@ -61,16 +61,17 @@
         </div>
 
         <template v-if="d.playing && d.playing.canSeek">
-          <label class="lbl">ตำแหน่งคลิป (ทุกคนบนจอนี้กรอตาม) <b>{{ clock(pos) }}</b></label>
+          <label class="lbl">ตำแหน่งคลิป (ทุกคนบนจอนี้กรอตาม)
+            <b><span :class="{ hot: dragging }">{{ clock(shownPos) }}</span> / {{ d.playing.duration ? clock(d.playing.duration) : '?' }}</b>
+          </label>
           <div class="row seek">
-            <button class="btn sm" @click="seekBy(-30)" :disabled="busy">-30</button>
             <button class="btn sm" @click="seekBy(-10)" :disabled="busy">-10</button>
+            <input type="range" class="range seekbar" min="0" :max="seekMax" step="1" :value="shownPos"
+                   :style="{ '--p': (shownPos / seekMax * 100) + '%' }" @input="onSlide($event.target.value)">
             <button class="btn sm" @click="seekBy(10)" :disabled="busy">+10</button>
-            <button class="btn sm" @click="seekBy(30)" :disabled="busy">+30</button>
-            <input class="inp sm" v-model.trim="seekText" placeholder="1:23" maxlength="8" @keydown.enter="seekTo">
-            <button class="btn sm" @click="seekTo" :disabled="busy || !parseClock(seekText)"><iconify-icon icon="mdi:skip-next"></iconify-icon>ไปที่</button>
           </div>
-          <p class="note">ข้ามโฆษณาไม่ได้ (ปุ่ม Skip เป็นของ YouTube) แต่กรอหลังโฆษณาจบได้</p>
+          <p class="note" v-if="dragging">ปล่อยไว้ {{ seekDelaySec }} วิ แล้วจะกรอให้ทุกคน</p>
+          <p class="note" v-else-if="!d.playing.duration">ยังไม่รู้ความยาวคลิป (ยืนใกล้จอสักครู่แล้วเปิดรีโมทใหม่)</p>
         </template>
 
         <label class="lbl">เสียงทีวี (ทุกคนได้ยินเท่านี้) <b>{{ vol }}%</b></label>
@@ -84,6 +85,7 @@
       <div class="actions">
         <button class="btn danger" v-if="d.canRemove" @click="remove" :disabled="busy"><iconify-icon icon="mdi:delete"></iconify-icon>เก็บทีวี</button>
         <div class="grow"></div>
+        <button class="btn" v-if="d.playing" @click="touch" title="เล็งแล้วคลิกบนจอ เช่น กด Skip โฆษณา (เฉพาะจอของคุณ)"><iconify-icon icon="mdi:gesture-tap"></iconify-icon>แตะจอ / ข้ามโฆษณา</button>
         <button class="btn" v-if="d.canControl && d.playing" @click="stop" :disabled="busy"><iconify-icon icon="mdi:stop"></iconify-icon>ปิดทีวี</button>
       </div>
     </div>
@@ -171,14 +173,15 @@
         <div class="create">
           <div class="create-row">
             <label class="lbl">กลุ่ม</label>
-            <input class="inp" v-model.trim="newGroup" placeholder="เช่น bar_a" maxlength="24">
+            <input class="inp" v-model.trim="newGroup" placeholder="เช่น bar_a" maxlength="24" :class="{ bad: !groupOk(newGroup) }">
             <label class="lbl">กว้าง (ม.)</label>
             <input class="inp w80" type="number" step="0.1" v-model.number="newWidth">
           </div>
           <div class="create-row">
             <button class="btn primary sm" @click="admin('createFree', { group: newGroup, w: newWidth })" :disabled="busy || !groupOk(newGroup)"><iconify-icon icon="mdi:monitor-screenshot"></iconify-icon>วางจอใส</button>
             <button class="btn sm" @click="admin('attachTv', { group: newGroup })" :disabled="busy || !groupOk(newGroup)"><iconify-icon icon="mdi:television"></iconify-icon>ใช้ทีวีใกล้ตัว (5 ม.)</button>
-            <span class="note">จอที่ชื่อกลุ่มเดียวกัน = ใช้คิวเดียวกัน โชว์คนเดียวกันพร้อมกัน</span>
+            <span class="note warn" v-if="!groupOk(newGroup)">ชื่อกลุ่มใช้ได้แค่ a-z 0-9 _ - (ห้ามภาษาไทย/เว้นวรรค)</span>
+            <span class="note" v-else>จอที่ชื่อกลุ่มเดียวกัน = ใช้คิวเดียวกัน โชว์คนเดียวกันพร้อมกัน</span>
           </div>
         </div>
         <div class="empty" v-if="!d.boards.length">ยังไม่มีจอวาร์ป</div>

@@ -46,6 +46,8 @@ iconify-icon { display: inline-flex; }
 .row { display: flex; gap: 8px; }
 .grow { flex: 1 1 auto; }
 .note { font-size: 13px; color: var(--ink-dim); display: flex; align-items: center; gap: 6px; }
+.note.warn { color: var(--warn); }
+.inp.bad { box-shadow: inset 0 0 0 1px var(--warn); }
 .dim { color: var(--ink-dim); font-size: 13px; }
 
 .inp {
@@ -74,8 +76,10 @@ iconify-icon { display: inline-flex; }
 .range::-webkit-slider-thumb { -webkit-appearance: none; width: 18px; height: 18px; border-radius: 50%; background: var(--accent); cursor: pointer; box-shadow: 0 0 0 4px rgba(13, 207, 199, 0.2); }
 .range:disabled { opacity: 0.4; }
 
+.seek { align-items: center; }
 .seek .btn { flex: 0 0 auto; }
-.inp.sm { height: 34px; flex: 1 1 60px; }
+.seekbar { flex: 1 1 auto; width: auto; background: linear-gradient(90deg, var(--accent) var(--p, 0%), var(--bg-3) var(--p, 0%)); }
+.hot { color: var(--accent); }
 
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .chip { font-size: 12px; color: var(--ink-dim); padding: 3px 9px; border-radius: 999px; background: var(--bg-2); display: inline-flex; align-items: center; gap: 4px; }

@@ -36,7 +36,10 @@ var app = new Vue({
         pos: 0,
         posBase: 0,
         posAt: 0,
-        seekText: '',
+        dragging: false,
+        slideVal: 0,
+        seekTimer: null,
+        seekDelaySec: 1.2,
         // submit
         form: { img: '', text: '', ig: '', fb: '', tt: '' },
         imgOk: true,
@@ -60,6 +63,16 @@ var app = new Vue({
             if (this.mode === 'place') return 'เลือกรุ่น แล้วเล็งตำแหน่งที่จะวาง';
             return '';
         },
+        shownPos: function () {
+            var p = this.dragging ? this.slideVal : this.pos;
+            return Math.min(Math.floor(p), this.seekMax);
+        },
+        // ไม่รู้ความยาว = เผื่อไปข้างหน้า 10 นาที
+        seekMax: function () {
+            var p = this.d.playing;
+            if (p && p.duration) return Math.max(1, Math.floor(p.duration));
+            return Math.max(600, Math.ceil((this.pos + 600) / 60) * 60);
+        },
         canSubmit: function () {
             var f = this.form;
             return /^https:\/\//i.test(f.img) && (f.ig || f.fb || f.tt);
@@ -79,7 +92,8 @@ var app = new Vue({
                 this.url = '';
                 this.vol = this.d.vol != null ? this.d.vol : 60;
                 this.personal = this.d.personal != null ? this.d.personal : 70;
-                this.seekText = '';
+                this.dragging = false;
+                clearTimeout(this.seekTimer);
                 this.syncPos();
             } else if (mode === 'submit') {
                 this.form = { img: '', text: '', ig: '', fb: '', tt: '' };
@@ -87,6 +101,13 @@ var app = new Vue({
             } else if (mode === 'admin') {
                 this.tab = this.d.tab || (this.d.pending && this.d.pending.length ? 'pending' : this.tab);
                 this.newWidth = this.d.defaultWidth || 2.4;
+                // ชื่อกลุ่มเริ่มต้น = กลุ่มใหม่ที่ยังไม่มีใครใช้ (warp1, warp2, ...)
+                if (!this.groupOk(this.newGroup)) {
+                    var used = {}, n = 1;
+                    (this.d.boards || []).forEach(function (b) { used[b.group] = true; });
+                    while (used['warp' + n]) n++;
+                    this.newGroup = 'warp' + n;
+                }
                 this.editGroup = {};
             }
             this.visible = true;
@@ -126,19 +147,24 @@ var app = new Vue({
             var mm = (h > 0 && m < 10 ? '0' : '') + m, ss = (x < 10 ? '0' : '') + x;
             return (h > 0 ? h + ':' : '') + mm + ':' + ss;
         },
-        parseClock: function (t) {
-            if (!t || !/^\d+(:\d{1,2}){0,2}$/.test(t)) return null;
-            var parts = t.split(':').map(Number), s = 0;
-            parts.forEach(function (n) { s = s * 60 + n; });
-            return { s: s };
-        },
-        seekBy: function (d) { this.call('remote', { act: 'seek', pos: Math.max(0, this.pos + d) }); },
-        seekTo: function () {
-            var c = this.parseClock(this.seekText);
-            if (!c) return;
+        // แถบเลื่อน : ลากได้เรื่อยๆ ส่งค่าตอนหยุดนิ่ง seekDelaySec วิ
+        onSlide: function (v) {
             var self = this;
-            this.call('remote', { act: 'seek', pos: c.s }).then(function (res) { if (res.ok) self.seekText = ''; });
+            this.dragging = true;
+            this.slideVal = Number(v);
+            clearTimeout(this.seekTimer);
+            this.seekTimer = setTimeout(function () { self.commitSeek(self.slideVal); }, this.seekDelaySec * 1000);
         },
+        commitSeek: function (sec) {
+            var self = this;
+            clearTimeout(this.seekTimer);
+            this.call('remote', { act: 'seek', pos: Math.max(0, sec) }).then(function (res) {
+                if (res.ok) { self.posBase = Math.max(0, sec); self.posAt = Date.now(); self.pos = self.posBase; }
+                self.dragging = false;
+            });
+        },
+        seekBy: function (d) { this.commitSeek(Math.floor((this.dragging ? this.slideVal : this.pos) + d)); },
+        touch: function () { post('remote', { act: 'touch' }); this.visible = false; },
         play: function () {
             if (!this.url) return;
             var self = this;
@@ -177,7 +203,7 @@ window.addEventListener('message', function (e) {
     else if (m.action === 'update') {
         app.d = m.data;
         app.vol = m.data.vol != null ? m.data.vol : app.vol;
-        app.syncPos();
+        if (!app.dragging) app.syncPos();
     }
     else if (m.action === 'hint') app.hint = m.lines;
 });
@@ -195,7 +221,7 @@ window.addEventListener('keydown', function (e) {
     document.body.style.background = '#2b3240 url(https://picsum.photos/1600/900?blur=3) center/cover';
     var post1 = { img: 'https://picsum.photos/400', text: 'ร้านเหล้าเปิดแล้ว มาดื่มกันคืนนี้!', ig: 'somchai.bit', fb: 'Somchai Jaidee', tt: '' };
     var data = {
-        remote: { canControl: true, canRemove: true, playing: { provider: 'YouTube', url: 'https://www.youtube.com/watch?v=jfKfPfyJRdk', audio: 'volume', by: 'Somchai', canSeek: true, elapsed: 83 }, vol: 60, personal: 70 },
+        remote: { canControl: true, canRemove: true, playing: { provider: 'YouTube', url: 'https://www.youtube.com/watch?v=jfKfPfyJRdk', audio: 'volume', by: 'Somchai', canSeek: true, elapsed: 83, duration: 212 }, vol: 60, personal: 70 },
         submit: { group: 'bar_a', price: 5000, queue: 2, wait: 24, duration: 15, limits: { text: 80, name: 30, img: 600 } },
         admin: { pending: [{ id: 1, group: 'bar_a', name: 'Somchai', paid: 5000, post: post1 }, { id: 2, group: 'club', name: 'Nida', paid: 0, post: { img: 'https://picsum.photos/401', text: '', ig: '', fb: '', tt: 'nida.dance' } }],
                  boards: [{ key: 'f:1', group: 'bar_a', kind: 'free', x: 120.5, y: -1290.2, z: 29.3, queue: 2 }, { key: 'm:12345:1.0:2.0:3.0', group: 'bar_a', kind: 'tv', x: 1, y: 2, z: 3, queue: 2 }], defaultWidth: 2.4,
