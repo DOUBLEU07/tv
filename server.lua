@@ -162,7 +162,7 @@ lib.callback.register(script .. ":sv:tvInfo", function(src, key, meta)
     return res
 end)
 
-lib.callback.register(script .. ":sv:tvPlay", function(src, key, meta, url, vol)
+lib.callback.register(script .. ":sv:tvPlay", function(src, key, meta, url, vol, music)
     if type(key) ~= "string" then return { ok = false, msg = "ไม่พบทีวี" } end
     local pos = ScreenPos(key, meta)
     if not pos or not NearTv(src, pos) then return { ok = false, msg = "อยู่ไกลทีวีเกินไป" } end
@@ -173,6 +173,8 @@ lib.callback.register(script .. ":sv:tvPlay", function(src, key, meta, url, vol)
 
     local media, err = Shared.ParseMedia(url)
     if not media then return { ok = false, msg = err } end
+    --@ โหมดเพลง (YouTube เท่านั้น) : ตัวเล่น 0x0 มองไม่เห็น จอโชว์หน้าเพลงแทน
+    if music == true and media.p == "youtube" then media.ao = true end
 
     local xPlayer = GetX(src)
     vol = math.floor(math.max(0, math.min(100, tonumber(vol) or Config.TV.DefaultVolume)))

@@ -31,6 +31,7 @@ var app = new Vue({
         hint: null,
         // remote
         url: '',
+        music: false,
         vol: 60,
         personal: 70,
         pos: 0,
@@ -168,7 +169,9 @@ var app = new Vue({
         play: function () {
             if (!this.url) return;
             var self = this;
-            this.call('remote', { act: 'play', url: this.url, vol: this.vol }).then(function (res) { if (res.ok) self.url = ''; });
+            // ลิงก์ music.youtube.com = เปิดเป็นเพลงให้เลย
+            var music = this.music || /music\.youtube\.com/i.test(this.url);
+            this.call('remote', { act: 'play', url: this.url, vol: this.vol, music: music }).then(function (res) { if (res.ok) self.url = ''; });
         },
         stop: function () { this.call('remote', { act: 'stop' }); },
         setVol: function () { this.call('remote', { act: 'volume', vol: this.vol }); },

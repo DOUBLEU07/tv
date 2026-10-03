@@ -38,7 +38,7 @@
       <div class="now" :class="{ off: !d.playing }">
         <div class="now-dot"></div>
         <div class="now-info" v-if="d.playing">
-          <p class="now-title">{{ d.playing.provider }} <span>เปิดโดย {{ d.playing.by }}</span></p>
+          <p class="now-title">{{ d.playing.provider }}<template v-if="d.playing.music"> · เพลง</template> <span>เปิดโดย {{ d.playing.by }}</span></p>
           <p class="now-url">{{ d.playing.url }}</p>
           <p class="now-warn" v-if="d.playing.audio === 'mute'">เว็บนี้ปรับเสียงละเอียดไม่ได้ (เปิด/ปิดตามระยะ)</p>
           <p class="now-warn" v-if="d.playing.audio === false">เว็บนี้คุมเสียงไม่ได้ จอจะเล่นเฉพาะตอนอยู่ใกล้</p>
@@ -52,6 +52,10 @@
           <input class="inp" v-model="url" placeholder="วางลิงก์ YouTube / TikTok / Facebook / Twitch / Kick" @keydown.enter="play" maxlength="500">
           <button class="btn primary" @click="play" :disabled="busy || !url"><iconify-icon icon="mdi:play"></iconify-icon>เปิด</button>
         </div>
+        <label class="check" :class="{ on: music }" @click.prevent="music = !music">
+          <span class="box"><iconify-icon icon="mdi:check" v-if="music"></iconify-icon></span>
+          <iconify-icon icon="mdi:music"></iconify-icon>เปิดเป็นเพลง (YouTube · ไม่มีภาพ ไม่มีโฆษณา)
+        </label>
         <div class="chips">
           <span class="chip"><iconify-icon icon="mdi:youtube"></iconify-icon>YouTube</span>
           <span class="chip"><iconify-icon icon="ic:baseline-tiktok"></iconify-icon>TikTok</span>

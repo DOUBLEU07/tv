@@ -225,6 +225,7 @@ local function RemoteData(key, info)
         playing = media and {
             url = media.url,
             provider = Shared.ProviderLabel[media.p] or media.p,
+            music = media.ao == true,
             audio = Shared.AudioControl[media.p],
             by = st.by,
             canSeek = Shared.CanSeek(media),
@@ -315,7 +316,7 @@ RegisterNUICallback("remote", function(data, cb)
         TV.Touch(key, mirror)
         return
     elseif data.act == "play" then
-        res = lib.callback.await(script .. ":sv:tvPlay", false, key, meta, data.url, data.vol)
+        res = lib.callback.await(script .. ":sv:tvPlay", false, key, meta, data.url, data.vol, data.music == true)
         if res and not res.ok then TV.Notify("error", res.msg or "เปิดไม่สำเร็จ") end
     elseif data.act == "stop" then
         res = lib.callback.await(script .. ":sv:tvStop", false, key, meta)

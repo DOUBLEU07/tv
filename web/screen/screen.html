@@ -30,6 +30,24 @@
   #player.vertical > iframe { left: 50%; width: 405px; transform: translateX(-50%); }
   #player video { object-fit: contain; background: #000; }
   .fb-wrap { display: flex; align-items: center; justify-content: center; }
+  /* ---------------- โหมดเพลง ---------------- */
+  .music { position: absolute; inset: 0; overflow: hidden; background: #07090f; }
+  .music .mbg { position: absolute; inset: -60px; background-size: cover; background-position: center; filter: blur(48px) brightness(0.45) saturate(1.3); }
+  .music .mcard { position: absolute; left: 70px; right: 70px; top: 50%; transform: translateY(-50%); display: flex; align-items: center; gap: 54px; }
+  .music .mart { flex: 0 0 auto; width: 560px; height: 315px; border-radius: 24px; object-fit: cover; background: #111; box-shadow: 0 24px 60px rgba(0,0,0,.55), 0 0 0 3px rgba(255,255,255,.08); }
+  .music .minfo { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 14px; }
+  .music .mlabel { font-size: 22px; font-weight: 600; letter-spacing: 4px; color: var(--accent); display: flex; align-items: center; gap: 14px; }
+  .music .mtitle { font-size: 44px; font-weight: 600; line-height: 1.22; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; word-break: break-word; }
+  .music .mauthor { font-size: 28px; color: var(--ink-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .music .mbar { margin-top: 18px; height: 8px; border-radius: 8px; background: rgba(255,255,255,.14); overflow: hidden; }
+  .music .mbar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
+  .music .mtime { font-size: 22px; color: var(--ink-dim); display: flex; justify-content: space-between; }
+  .eq { display: inline-flex; align-items: flex-end; gap: 4px; height: 22px; }
+  .eq b { width: 5px; height: 100%; background: var(--accent); border-radius: 2px; animation: eq 0.9s ease-in-out infinite; transform-origin: bottom; }
+  .eq b:nth-child(2) { animation-delay: -.3s; } .eq b:nth-child(3) { animation-delay: -.6s; } .eq b:nth-child(4) { animation-delay: -.15s; }
+  .music.paused .eq b { animation-play-state: paused; }
+  @keyframes eq { 0%, 100% { transform: scaleY(.25); } 50% { transform: scaleY(1); } }
+
   #vmsg {
     position: absolute; inset: 0; display: none; align-items: center; justify-content: center; flex-direction: column; gap: 10px;
     background: #05070b; text-align: center; padding: 60px;
@@ -185,21 +203,70 @@
 
   var Players = {};
 
+  function clockText(s) {
+    s = Math.max(0, Math.floor(s || 0));
+    var h = Math.floor(s / 3600), mi = Math.floor(s % 3600 / 60), x = s % 60;
+    return (h > 0 ? h + ':' + (mi < 10 ? '0' : '') : '') + mi + ':' + (x < 10 ? '0' : '') + x;
+  }
+
+  // หน้าเพลง (m.ao) : ปก + ชื่อ + แถบเวลา ; ตัวเล่นจริงขนาด 0x0 แบบ nc_musicplayers
+  function musicView(m) {
+    var thumb = 'https://i.ytimg.com/vi/' + encodeURIComponent(m.id) + '/maxresdefault.jpg';
+    var el = document.createElement('div');
+    el.className = 'music paused';
+    el.innerHTML =
+      '<div class="mbg"></div>' +
+      '<div class="mcard"><img class="mart" alt="">' +
+        '<div class="minfo">' +
+          '<div class="mlabel"><span class="eq"><b></b><b></b><b></b><b></b></span>NOW PLAYING</div>' +
+          '<div class="mtitle">กำลังโหลด...</div><div class="mauthor"></div>' +
+          '<div class="mbar"><i></i></div><div class="mtime"><span>0:00</span><span></span></div>' +
+        '</div></div>';
+    var img = el.querySelector('.mart');
+    img.onerror = function () {
+      if (img.src.indexOf('maxres') >= 0) { thumb = thumb.replace('maxresdefault', 'mqdefault'); img.src = thumb; el.querySelector('.mbg').style.backgroundImage = 'url(' + thumb + ')'; }
+    };
+    img.src = thumb;
+    el.querySelector('.mbg').style.backgroundImage = 'url(' + thumb + ')';
+    return el;
+  }
+
   Players.youtube = function (m, elapsed, vol, msg) {
-    // ytSmall = ความกว้างตัวเล่นจริง (px) : ตัวเล่นเล็ก = YouTube ไม่ยิงโฆษณา แล้วใช้ CSS ขยายภาพให้เต็มจอ
-    var small = msg && msg.ytSmall > 0 ? Math.min(1280, Math.floor(msg.ytSmall)) : 0;
-    var pw = small || 1280, ph = Math.round(pw * 9 / 16);
+    var music = m.ao === true;
+    var pw = music ? 0 : 1280, ph = music ? 0 : 720;
     var div = document.createElement('div');
     div.id = 'yt-' + Date.now();
-    if (small) {
+    var view = null;
+    if (music) {
+      // ตัวเล่นมองไม่เห็น : ห่อด้วยกล่อง 0x0 (style ในบรรทัดชนะกฎ #player > div ที่บังคับเต็มจอ)
       var wrap = document.createElement('div');
-      wrap.style.cssText = 'position:absolute;left:0;top:0;width:' + pw + 'px;height:' + ph + 'px;transform-origin:0 0;transform:scale(' + (1280 / pw) + ');';
+      wrap.style.cssText = 'position:absolute;left:0;top:0;width:0;height:0;overflow:hidden;';
       wrap.appendChild(div);
+      view = musicView(m);
+      $('player').appendChild(view);
       $('player').appendChild(wrap);
     } else {
       $('player').appendChild(div);
     }
-    var self = { yt: null, ready: false, vol: vol, ended: false };
+    var self = { yt: null, ready: false, vol: vol, ended: false, tick: null };
+    function updateView() {
+      if (!view || !self.ready) return;
+      var d = self.yt.getDuration() || 0, c = self.yt.getCurrentTime() || 0;
+      view.querySelector('.mbar i').style.width = (d > 0 ? Math.min(100, c / d * 100) : 0) + '%';
+      var t = view.querySelectorAll('.mtime span');
+      t[0].textContent = clockText(c);
+      t[1].textContent = d > 0 ? clockText(d) : 'LIVE';
+      view.classList.toggle('paused', self.yt.getPlayerState() !== 1);
+      // ชื่อเพลงบางทียังไม่มาตอน onReady : ดึงซ้ำจนได้
+      if (!self.titled) {
+        var vd = (self.yt.getVideoData && self.yt.getVideoData()) || {};
+        if (vd.title) {
+          self.titled = true;
+          view.querySelector('.mtitle').textContent = vd.title;
+          view.querySelector('.mauthor').textContent = vd.author || '';
+        }
+      }
+    }
     function ytReady() {
       self.yt = new YT.Player(div.id, {
         width: pw, height: ph, videoId: m.id,
@@ -210,6 +277,13 @@
             e.target.unMute();
             e.target.setVolume(self.vol);
             e.target.playVideo();
+            if (view) {
+              var vd = (e.target.getVideoData && e.target.getVideoData()) || {};
+              view.querySelector('.mtitle').textContent = vd.title || 'YouTube';
+              self.titled = !!vd.title;
+              view.querySelector('.mauthor').textContent = vd.author || '';
+              self.tick = setInterval(updateView, 500);
+            }
           },
           onStateChange: function (e) {
             if (e.data === 0) { self.ended = true; vmsg('จบแล้ว', ''); }
@@ -243,7 +317,7 @@
       if (force || Math.abs(self.yt.getCurrentTime() - el) > 4) { self.yt.seekTo(el, true); self.yt.playVideo(); }
     };
     self.duration = function () { return self.ready ? self.yt.getDuration() : 0; };
-    self.destroy = function () { if (self.yt && self.yt.destroy) self.yt.destroy(); };
+    self.destroy = function () { clearInterval(self.tick); if (self.yt && self.yt.destroy) self.yt.destroy(); };
     return self;
   };
 
@@ -503,7 +577,7 @@
     onBoard({ t: 'board', rev: demo, post: demo === 'empty' ? null : post, remain: 11, dur: 15, next: 3, price: 5000, kind: demo === 'free' ? 'free' : 'tv' });
     if (demo === 'free') document.body.style.background = 'url(https://picsum.photos/1280/720?blur=2) center/cover';
   } else if (demo === 'yt') {
-    onVideo({ t: 'video', rev: 'demo', media: { p: 'youtube', id: 'jfKfPfyJRdk' }, elapsed: 0, vol: 30, ytSmall: (location.search.match(/small=([0-9]+)/) || [])[1] * 1 || 0 });
+    onVideo({ t: 'video', rev: 'demo', media: { p: 'youtube', id: (location.search.match(/id=([\w-]+)/) || [])[1] || 'jfKfPfyJRdk', ao: /music=1/.test(location.search) }, elapsed: 0, vol: 30 });
   }
 })();
 </script>

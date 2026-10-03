@@ -230,7 +230,6 @@ local function VideoMessage(key, st, now, dist)
         elapsed = math.max(0.0, now - st.startAt),
         vol = math.floor(vol + 0.5),
         audio = Shared.AudioControl[st.media.p],
-        ytSmall = Config.TV.YouTubeNoAds and Config.TV.YouTubeNoAds.Enable and Config.TV.YouTubeNoAds.Width or nil,
     }
 end
 
