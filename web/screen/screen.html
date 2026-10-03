@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<title>bit_tv screen</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --accent: #0dcfc7;
+    --accent-2: #7c5cff;
+    --ink: #f4f7fb;
+    --ink-dim: rgba(244, 247, 251, 0.62);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    width: 1280px; height: 720px; overflow: hidden;
+    background: transparent;
+    font-family: "Kanit", sans-serif; color: var(--ink);
+  }
+  .layer { position: absolute; inset: 0; display: none; }
+  .layer.on { display: block; }
+
+  /* ---------------- video ---------------- */
+  #video { background: #000; }
+  #player, #player > iframe, #player > video, #player > div { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+  #player.vertical { background: radial-gradient(circle at 50% 40%, #1b1f2a, #000 70%); }
+  #player.vertical > iframe { left: 50%; width: 405px; transform: translateX(-50%); }
+  #player video { object-fit: contain; background: #000; }
+  .fb-wrap { display: flex; align-items: center; justify-content: center; }
+  #vmsg {
+    position: absolute; inset: 0; display: none; align-items: center; justify-content: center; flex-direction: column; gap: 10px;
+    background: #05070b; text-align: center; padding: 60px;
+  }
+  #vmsg.on { display: flex; }
+  #vmsg .big { font-size: 46px; font-weight: 600; }
+  #vmsg .small { font-size: 24px; color: var(--ink-dim); }
+
+  /* ---------------- board ---------------- */
+  #board { padding: 34px; }
+  #board.tv { background: linear-gradient(135deg, #0b0f19 0%, #121a2b 55%, #0b1220 100%); }
+  #board.free .frame { background: rgba(8, 12, 22, 0.58); }
+  .frame {
+    position: relative; width: 100%; height: 100%; border-radius: 34px; overflow: hidden;
+    background: rgba(255, 255, 255, 0.04);
+    box-shadow: inset 0 0 0 3px rgba(13, 207, 199, 0.55), 0 0 60px rgba(13, 207, 199, 0.18);
+  }
+  .tag {
+    position: absolute; top: 26px; left: 30px; display: flex; align-items: center; gap: 12px;
+    font-size: 22px; font-weight: 600; letter-spacing: 3px; color: var(--accent);
+  }
+  .tag .dot { width: 12px; height: 12px; border-radius: 50%; background: #ff3b5c; box-shadow: 0 0 14px #ff3b5c; animation: blink 1.2s infinite; }
+  .queue { position: absolute; top: 26px; right: 30px; font-size: 22px; color: var(--ink-dim); }
+  @keyframes blink { 50% { opacity: 0.25; } }
+
+  .card { position: absolute; inset: 80px 44px 64px 44px; display: flex; gap: 46px; align-items: center; }
+  .card.enter { animation: enter 0.6s cubic-bezier(.2, .9, .3, 1.2); }
+  @keyframes enter { from { opacity: 0; transform: translateY(26px) scale(0.97); } to { opacity: 1; transform: none; } }
+  .photo {
+    flex: 0 0 auto; width: 470px; height: 470px; border-radius: 28px; overflow: hidden; position: relative;
+    background: linear-gradient(135deg, #1d2740, #0f1626);
+    box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.08), 0 18px 50px rgba(0, 0, 0, 0.45);
+  }
+  .photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .photo .noimg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 90px; color: rgba(255,255,255,.18); }
+  .info { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 22px; }
+  .text {
+    font-size: 46px; font-weight: 600; line-height: 1.25;
+    display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; word-break: break-word;
+  }
+  .socials { display: flex; flex-direction: column; gap: 14px; }
+  .soc { display: flex; align-items: center; gap: 16px; font-size: 34px; font-weight: 500; min-width: 0; }
+  .soc span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ico { flex: 0 0 auto; width: 54px; height: 54px; border-radius: 15px; display: flex; align-items: center; justify-content: center; }
+  .ico svg { width: 32px; height: 32px; fill: #fff; }
+  .ico.ig { background: radial-gradient(circle at 30% 107%, #fdf497 0%, #fd5949 45%, #d6249f 60%, #285AEB 90%); }
+  .ico.fb { background: #1877f2; }
+  .ico.tt { background: #111; box-shadow: -3px -3px 0 #25f4ee inset, 3px 3px 0 #fe2c55 inset; }
+
+  .bar { position: absolute; left: 0; right: 0; bottom: 0; height: 10px; background: rgba(255, 255, 255, 0.08); }
+  .bar i { display: block; height: 100%; width: 100%; background: linear-gradient(90deg, var(--accent), var(--accent-2)); transform-origin: left; }
+
+  .empty {
+    position: absolute; inset: 80px 44px 54px 44px; border: 4px dashed rgba(255, 255, 255, 0.22); border-radius: 28px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; text-align: center;
+  }
+  .empty .big { font-size: 84px; font-weight: 700; letter-spacing: 6px; color: rgba(255, 255, 255, 0.9); }
+  .empty .small { font-size: 32px; color: var(--ink-dim); }
+  .empty .price {
+    margin-top: 14px; font-size: 30px; font-weight: 600; padding: 8px 30px; border-radius: 999px;
+    background: rgba(13, 207, 199, 0.16); color: var(--accent); box-shadow: inset 0 0 0 2px rgba(13, 207, 199, 0.5);
+  }
+</style>
+</head>
+<body>
+
+<div id="video" class="layer">
+  <div id="player"></div>
+  <div id="vmsg"><div class="big"></div><div class="small"></div></div>
+</div>
+
+<div id="board" class="layer">
+  <div class="frame">
+    <div class="tag"><span class="dot"></span>WARP</div>
+    <div class="queue" id="bqueue"></div>
+    <div id="bbody"></div>
+    <div class="bar" id="bbar"><i></i></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var HOST = location.hostname || 'localhost';
+  var ICON = {
+    ig: '<svg viewBox="0 0 24 24"><path d="M12 2.2c3.2 0 3.6 0 4.8.1 3.3.1 4.8 1.7 4.9 4.9.1 1.3.1 1.6.1 4.8s0 3.6-.1 4.8c-.1 3.2-1.7 4.8-4.9 4.9-1.3.1-1.6.1-4.8.1s-3.6 0-4.8-.1c-3.3-.1-4.8-1.7-4.9-4.9C2.2 15.6 2.2 15.2 2.2 12s0-3.6.1-4.8C2.4 3.9 3.9 2.4 7.2 2.3 8.4 2.2 8.8 2.2 12 2.2zm0 4.7a5.1 5.1 0 100 10.2 5.1 5.1 0 000-10.2zm0 8.4a3.3 3.3 0 110-6.6 3.3 3.3 0 010 6.6zm5.3-9.8a1.2 1.2 0 100 2.4 1.2 1.2 0 000-2.4z"/></svg>',
+    fb: '<svg viewBox="0 0 24 24"><path d="M14 8.5V6.6c0-.9.6-1.1 1-1.1h2.6V1.6L14 1.6c-4 0-4.9 3-4.9 4.9v2H6.7v4h2.4V22.4H14V12.5h3.3l.4-4H14z"/></svg>',
+    tt: '<svg viewBox="0 0 24 24"><path d="M19.6 6.7a4.8 4.8 0 01-3.8-4.2V2h-3.4v13.4a2.9 2.9 0 11-2-2.7V9.2a6.3 6.3 0 105.4 6.2V8.6a8.1 8.1 0 003.8 1.2V6.7z"/></svg>'
+  };
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+
+  function loadScript(src) {
+    loadScript.cache = loadScript.cache || {};
+    if (loadScript.cache[src]) return loadScript.cache[src];
+    loadScript.cache[src] = new Promise(function (resolve, reject) {
+      var s = document.createElement('script');
+      s.src = src; s.async = true;
+      s.onload = resolve; s.onerror = reject;
+      document.head.appendChild(s);
+    });
+    return loadScript.cache[src];
+  }
+
+  function show(id) {
+    ['video', 'board'].forEach(function (l) { $(l).classList.toggle('on', l === id); });
+  }
+
+  function vmsg(big, small) {
+    var el = $('vmsg');
+    if (!big) { el.classList.remove('on'); return; }
+    el.querySelector('.big').textContent = big;
+    el.querySelector('.small').textContent = small || '';
+    el.classList.add('on');
+  }
+
+  // =========================================================================================
+  // ตัวเล่นแต่ละเว็บ : { setAudio(vol0to100), sync(elapsed), destroy() }
+  // =========================================================================================
+  var P = null;
+  var rev = null;
+  var lastDrift = 0;
+
+  function clearPlayer() {
+    if (P && P.destroy) { try { P.destroy(); } catch (e) {} }
+    P = null;
+    var box = $('player');
+    box.innerHTML = '';
+    box.className = '';
+    vmsg(null);
+  }
+
+  function iframe(src) {
+    var f = document.createElement('iframe');
+    f.src = src;
+    f.allow = 'autoplay; encrypted-media; picture-in-picture';
+    f.setAttribute('allowfullscreen', '');
+    $('player').appendChild(f);
+    return f;
+  }
+
+  function hms(sec) {
+    sec = Math.max(0, Math.floor(sec));
+    var h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), s = sec % 60;
+    return h + 'h' + m + 'm' + s + 's';
+  }
+
+  var Players = {};
+
+  Players.youtube = function (m, elapsed, vol) {
+    var div = document.createElement('div');
+    div.id = 'yt-' + Date.now();
+    $('player').appendChild(div);
+    var self = { yt: null, ready: false, vol: vol, ended: false };
+    function ytReady() {
+      self.yt = new YT.Player(div.id, {
+        width: 1280, height: 720, videoId: m.id,
+        playerVars: { autoplay: 1, controls: 0, disablekb: 1, fs: 0, iv_load_policy: 3, modestbranding: 1, rel: 0, playsinline: 1, start: Math.floor(elapsed) },
+        events: {
+          onReady: function (e) {
+            self.ready = true;
+            e.target.unMute();
+            e.target.setVolume(self.vol);
+            e.target.playVideo();
+          },
+          onStateChange: function (e) {
+            if (e.data === 0) { self.ended = true; vmsg('จบแล้ว', ''); }
+          },
+          onError: function (e) {
+            var c = e.data;
+            vmsg('เล่นคลิปนี้ไม่ได้', (c === 101 || c === 150) ? 'เจ้าของคลิปไม่อนุญาตให้เล่นนอก YouTube' : 'YouTube error ' + c);
+          }
+        }
+      });
+    }
+    if (window.YT && window.YT.Player) ytReady();
+    else {
+      var prev = window.onYouTubeIframeAPIReady;
+      window.onYouTubeIframeAPIReady = function () { if (prev) prev(); ytReady(); };
+      loadScript('https://www.youtube.com/iframe_api');
+    }
+    self.setAudio = function (v) {
+      self.vol = v;
+      if (self.ready) { self.yt.setVolume(v); if (v > 0) self.yt.unMute(); }
+    };
+    self.sync = function (el) {
+      if (!self.ready || self.ended) return;
+      var d = self.yt.getDuration();
+      if (!d) return; // live
+      if (el > d + 1) { self.ended = true; self.yt.stopVideo(); vmsg('จบแล้ว', ''); return; }
+      if (Math.abs(self.yt.getCurrentTime() - el) > 4) self.yt.seekTo(el, true);
+    };
+    self.destroy = function () { if (self.yt && self.yt.destroy) self.yt.destroy(); };
+    return self;
+  };
+
+  Players.twitch = function (m, elapsed, vol) {
+    var div = document.createElement('div');
+    div.id = 'tw-' + Date.now();
+    $('player').appendChild(div);
+    var self = { tw: null, ready: false, vol: vol };
+    loadScript('https://player.twitch.tv/js/embed/v1.js').then(function () {
+      var opt = { width: '100%', height: '100%', parent: [HOST], autoplay: true, muted: false, controls: false };
+      if (m.ch) opt.channel = m.ch; else { opt.video = m.v; opt.time = hms(elapsed); }
+      self.tw = new Twitch.Player(div.id, opt);
+      self.tw.addEventListener(Twitch.Player.READY, function () {
+        self.ready = true;
+        self.tw.setMuted(false);
+        self.tw.setVolume(self.vol / 100);
+      });
+    }).catch(function () { vmsg('โหลด Twitch ไม่ได้', ''); });
+    self.setAudio = function (v) {
+      self.vol = v;
+      if (self.ready) { self.tw.setVolume(v / 100); self.tw.setMuted(v <= 0); }
+    };
+    self.sync = function (el) {
+      if (!self.ready || m.ch) return;
+      if (Math.abs(self.tw.getCurrentTime() - el) > 5) self.tw.seek(el);
+    };
+    return self;
+  };
+
+  Players.twitch_clip = function (m) {
+    iframe('https://clips.twitch.tv/embed?clip=' + encodeURIComponent(m.id) + '&parent=' + encodeURIComponent(HOST) + '&autoplay=true&muted=false');
+    return {};
+  };
+
+  Players.facebook = function (m, elapsed, vol) {
+    var box = $('player');
+    box.classList.add('fb-wrap');
+    var self = { fb: null, vol: vol };
+    var el = document.createElement('div');
+    el.className = 'fb-video';
+    el.setAttribute('data-href', m.href);
+    el.setAttribute('data-width', '1280');
+    el.setAttribute('data-autoplay', 'true');
+    el.setAttribute('data-allowfullscreen', 'false');
+    el.setAttribute('data-show-text', 'false');
+    el.setAttribute('data-show-captions', 'false');
+    box.appendChild(el);
+
+    if (!document.getElementById('fb-root')) {
+      var r = document.createElement('div'); r.id = 'fb-root'; document.body.appendChild(r);
+    }
+    var token = {};
+    self.token = token;
+    loadScript('https://connect.facebook.net/en_US/sdk.js').then(function () {
+      if (!loadScript.fbInit) { FB.init({ xfbml: false, version: 'v19.0' }); loadScript.fbInit = true; }
+      FB.Event.subscribe('xfbml.ready', function (msg) {
+        if (msg.type !== 'video' || P !== self) return;
+        self.fb = msg.instance;
+        self.fb.unmute();
+        self.fb.setVolume(self.vol / 100);
+        if (elapsed > 1) self.fb.seek(elapsed);
+        self.fb.play();
+      });
+      FB.XFBML.parse(box);
+    }).catch(function () { vmsg('โหลด Facebook ไม่ได้', ''); });
+    self.setAudio = function (v) {
+      self.vol = v;
+      if (!self.fb) return;
+      if (v <= 0) self.fb.mute(); else { self.fb.unmute(); self.fb.setVolume(v / 100); }
+    };
+    self.sync = function (e) {
+      if (!self.fb) return;
+      var d = self.fb.getDuration && self.fb.getDuration();
+      if (d && e < d && Math.abs(self.fb.getCurrentPosition() - e) > 5) self.fb.seek(e);
+    };
+    return self;
+  };
+
+  Players.tiktok = function (m) {
+    $('player').classList.add('vertical');
+    var f = iframe('https://www.tiktok.com/player/v1/' + encodeURIComponent(m.id) +
+      '?autoplay=1&loop=1&controls=0&progress_bar=0&play_button=0&volume_control=0&fullscreen_button=0&timestamp=0&music_info=0&description=0&rel=0&native_context_menu=0&closed_caption=0');
+    var self = { muted: null, want: false };
+    function post(type) {
+      try { f.contentWindow.postMessage({ 'x-tiktok-player': true, type: type }, '*'); } catch (e) {}
+    }
+    // TikTok ยอมให้แค่เปิด/ปิดเสียง : ย้ำสถานะเป็นระยะ (ตอนโหลดเสร็จอาจเริ่มแบบปิดเสียง)
+    var tick = setInterval(function () { post(self.want ? 'unMute' : 'mute'); }, 2000);
+    self.setAudio = function (v) {
+      var want = v > 0;
+      if (want !== self.want || self.muted === null) { self.want = want; self.muted = !want; post(want ? 'unMute' : 'mute'); }
+    };
+    self.destroy = function () { clearInterval(tick); };
+    return self;
+  };
+
+  Players.kick = function (m) {
+    iframe('https://player.kick.com/' + encodeURIComponent(m.ch) + '?autoplay=true&muted=false');
+    return {};
+  };
+
+  Players.direct = function (m, elapsed, vol) {
+    var v = document.createElement('video');
+    v.autoplay = true; v.playsInline = true; v.volume = vol / 100;
+    $('player').appendChild(v);
+    var self = { v: v, hls: null };
+    function start() {
+      if (elapsed > 1 && isFinite(v.duration)) v.currentTime = elapsed;
+      v.play().catch(function () {});
+    }
+    v.addEventListener('loadedmetadata', start, { once: true });
+    v.addEventListener('ended', function () { vmsg('จบแล้ว', ''); });
+    v.addEventListener('error', function () { vmsg('เล่นไฟล์นี้ไม่ได้', ''); });
+    if (m.hls && !v.canPlayType('application/vnd.apple.mpegurl')) {
+      loadScript('https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.7/hls.min.js').then(function () {
+        if (!window.Hls || !Hls.isSupported()) return vmsg('เล่นไฟล์นี้ไม่ได้', '');
+        self.hls = new Hls();
+        self.hls.loadSource(m.src);
+        self.hls.attachMedia(v);
+      });
+    } else {
+      v.src = m.src;
+    }
+    self.setAudio = function (x) { v.volume = Math.max(0, Math.min(1, x / 100)); v.muted = x <= 0; };
+    self.sync = function (e) {
+      if (!isFinite(v.duration) || v.ended || e > v.duration) return;
+      if (Math.abs(v.currentTime - e) > 4) v.currentTime = e;
+    };
+    self.destroy = function () { if (self.hls) self.hls.destroy(); v.pause(); v.removeAttribute('src'); v.load(); };
+    return self;
+  };
+
+  function onVideo(msg) {
+    show('video');
+    if (msg.rev !== rev) {
+      clearPlayer();
+      rev = msg.rev;
+      var make = Players[msg.media.p];
+      if (!make) { vmsg('ไม่รองรับลิงก์นี้', ''); return; }
+      P = make(msg.media, msg.elapsed || 0, msg.vol || 0) || {};
+      lastDrift = Date.now();
+    }
+    if (P && P.setAudio) P.setAudio(msg.vol || 0);
+    if (P && P.sync && Date.now() - lastDrift > 3000) {
+      lastDrift = Date.now();
+      try { P.sync(msg.elapsed || 0); } catch (e) {}
+    }
+  }
+
+  // =========================================================================================
+  // จอวาร์ป
+  // =========================================================================================
+  var boardRev = null;
+
+  function money(n) { return '$' + Number(n || 0).toLocaleString('en-US'); }
+
+  function onBoard(msg) {
+    if (rev !== null) { clearPlayer(); rev = null; }
+    show('board');
+    var board = $('board');
+    board.className = 'layer on ' + (msg.kind === 'free' ? 'free' : 'tv');
+    $('bqueue').textContent = msg.next > 0 ? ('คิวถัดไป ' + msg.next) : '';
+
+    var bar = $('bbar').firstElementChild;
+    if (msg.post) {
+      var pct = Math.max(0, Math.min(1, msg.remain / msg.dur));
+      bar.style.transition = 'none';
+      bar.style.transform = 'scaleX(' + pct + ')';
+      void bar.offsetWidth;
+      bar.style.transition = 'transform ' + Math.max(0, msg.remain) + 's linear';
+      bar.style.transform = 'scaleX(0)';
+      $('bbar').style.display = '';
+    } else {
+      $('bbar').style.display = 'none';
+    }
+
+    if (msg.rev === boardRev) return;
+    boardRev = msg.rev;
+    var body = $('bbody');
+
+    if (!msg.post) {
+      body.innerHTML =
+        '<div class="empty">' +
+          '<div class="big">ว่าง</div>' +
+          '<div class="small">กด E ที่จอ เพื่อลงวาร์ปของคุณ</div>' +
+          '<div class="small">โชว์ ' + esc(msg.dur) + ' วินาที</div>' +
+          '<div class="price">' + (msg.price > 0 ? 'ราคา ' + money(msg.price) : 'ฟรี') + '</div>' +
+        '</div>';
+      return;
+    }
+
+    var p = msg.post;
+    var socials = '';
+    if (p.ig) socials += '<div class="soc"><div class="ico ig">' + ICON.ig + '</div><span>' + esc(p.ig) + '</span></div>';
+    if (p.fb) socials += '<div class="soc"><div class="ico fb">' + ICON.fb + '</div><span>' + esc(p.fb) + '</span></div>';
+    if (p.tt) socials += '<div class="soc"><div class="ico tt">' + ICON.tt + '</div><span>' + esc(p.tt) + '</span></div>';
+
+    body.innerHTML =
+      '<div class="card enter">' +
+        '<div class="photo"><div class="noimg">?</div><img alt=""></div>' +
+        '<div class="info">' +
+          (p.text ? '<div class="text">' + esc(p.text) + '</div>' : '') +
+          '<div class="socials">' + socials + '</div>' +
+        '</div>' +
+      '</div>';
+    var img = body.querySelector('img');
+    img.onload = function () { var n = body.querySelector('.noimg'); if (n) n.style.display = 'none'; };
+    img.onerror = function () { img.style.display = 'none'; };
+    img.src = p.img;
+  }
+
+  function onIdle() {
+    clearPlayer();
+    rev = null;
+    boardRev = null;
+    show(null);
+  }
+
+  window.addEventListener('message', function (e) {
+    var d = e.data;
+    if (typeof d === 'string') { try { d = JSON.parse(d); } catch (err) { return; } }
+    if (!d || typeof d !== 'object' || !d.t) return;
+    if (d.t === 'video') onVideo(d);
+    else if (d.t === 'board') onBoard(d);
+    else if (d.t === 'idle') onIdle();
+  });
+
+  // ดูในเบราว์เซอร์ : screen.html?demo=board | demo=empty | demo=yt
+  var demo = (location.search.match(/demo=(\w+)/) || [])[1];
+  if (demo === 'board' || demo === 'empty' || demo === 'free') {
+    var post = { name: 'Somchai', img: 'https://picsum.photos/600', text: 'ร้านเหล้าเปิดแล้ว มาดื่มกันคืนนี้! โต๊ะว่างเพียบ', ig: 'somchai.bit', fb: 'Somchai Jaidee', tt: 'somchai_tiktok' };
+    onBoard({ t: 'board', rev: demo, post: demo === 'empty' ? null : post, remain: 11, dur: 15, next: 3, price: 5000, kind: demo === 'free' ? 'free' : 'tv' });
+    if (demo === 'free') document.body.style.background = 'url(https://picsum.photos/1280/720?blur=2) center/cover';
+  } else if (demo === 'yt') {
+    onVideo({ t: 'video', rev: 'demo', media: { p: 'youtube', id: 'jfKfPfyJRdk' }, elapsed: 0, vol: 30 });
+  }
+})();
+</script>
+</body>
+</html>

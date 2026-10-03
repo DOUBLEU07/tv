@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BIT TV</title>
+  <script src="./framework/vue27.js"></script>
+  <script src="./framework/iconify-icon.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+
+  <!-- ================= hint ตอนวาง/จูน (ไม่จับเมาส์) ================= -->
+  <div class="hint" v-if="hint && hint.length">
+    <p v-for="(l, i) in hint" :key="i" v-html="l"></p>
+  </div>
+
+  <transition name="pop">
+  <div class="panel" v-if="visible" :class="'mode-' + mode">
+
+    <div class="head">
+      <div class="brand">
+        <div class="brand-icon"><iconify-icon :icon="headIcon"></iconify-icon></div>
+        <div>
+          <p class="brand-title">{{ headTitle }}</p>
+          <p class="brand-sub">{{ headSub }}</p>
+        </div>
+      </div>
+      <button class="x" @click="close" @mouseenter="hover"><iconify-icon icon="mdi:close"></iconify-icon></button>
+    </div>
+
+    <!-- ================= รีโมททีวี ================= -->
+    <div class="body" v-if="mode === 'remote'">
+      <div class="now" :class="{ off: !d.playing }">
+        <div class="now-dot"></div>
+        <div class="now-info" v-if="d.playing">
+          <p class="now-title">{{ d.playing.provider }} <span>เปิดโดย {{ d.playing.by }}</span></p>
+          <p class="now-url">{{ d.playing.url }}</p>
+          <p class="now-warn" v-if="d.playing.audio === 'mute'">เว็บนี้ปรับเสียงละเอียดไม่ได้ (เปิด/ปิดตามระยะ)</p>
+          <p class="now-warn" v-if="d.playing.audio === false">เว็บนี้คุมเสียงไม่ได้ จอจะเล่นเฉพาะตอนอยู่ใกล้</p>
+        </div>
+        <div class="now-info" v-else><p class="now-title">ทีวีปิดอยู่</p></div>
+      </div>
+
+      <template v-if="d.canControl">
+        <label class="lbl">ลิงก์</label>
+        <div class="row">
+          <input class="inp" v-model="url" placeholder="วางลิงก์ YouTube / TikTok / Facebook / Twitch / Kick" @keydown.enter="play" maxlength="500">
+          <button class="btn primary" @click="play" :disabled="busy || !url"><iconify-icon icon="mdi:play"></iconify-icon>เปิด</button>
+        </div>
+        <div class="chips">
+          <span class="chip"><iconify-icon icon="mdi:youtube"></iconify-icon>YouTube</span>
+          <span class="chip"><iconify-icon icon="ic:baseline-tiktok"></iconify-icon>TikTok</span>
+          <span class="chip"><iconify-icon icon="mdi:facebook"></iconify-icon>Facebook</span>
+          <span class="chip"><iconify-icon icon="mdi:twitch"></iconify-icon>Twitch</span>
+          <span class="chip"><iconify-icon icon="simple-icons:kick"></iconify-icon>Kick</span>
+        </div>
+
+        <label class="lbl">เสียงทีวี (ทุกคนได้ยินเท่านี้) <b>{{ vol }}%</b></label>
+        <input type="range" class="range" min="0" max="100" v-model.number="vol" @change="setVol" :disabled="!d.playing">
+      </template>
+      <p class="note" v-else><iconify-icon icon="mdi:lock"></iconify-icon> ทีวีนี้คุมได้เฉพาะแอดมิน{{ d.ownerName ? ' / เจ้าของ (' + d.ownerName + ')' : '' }}</p>
+
+      <label class="lbl">เสียงของฉัน (ได้ยินคนเดียว) <b>{{ personal }}%</b></label>
+      <input type="range" class="range" min="0" max="100" v-model.number="personal" @change="setPersonal">
+
+      <div class="actions">
+        <button class="btn danger" v-if="d.canRemove" @click="remove" :disabled="busy"><iconify-icon icon="mdi:delete"></iconify-icon>เก็บทีวี</button>
+        <div class="grow"></div>
+        <button class="btn" v-if="d.canControl && d.playing" @click="stop" :disabled="busy"><iconify-icon icon="mdi:stop"></iconify-icon>ปิดทีวี</button>
+      </div>
+    </div>
+
+    <!-- ================= ลงวาร์ป ================= -->
+    <div class="body submit" v-if="mode === 'submit'">
+      <div class="sub-grid">
+        <div class="preview">
+          <img v-if="form.img && imgOk" :src="form.img" @error="imgOk = false">
+          <div class="preview-empty" v-else><iconify-icon icon="mdi:image-outline"></iconify-icon><span>{{ form.img ? 'โหลดรูปไม่ได้' : 'ตัวอย่างรูป' }}</span></div>
+        </div>
+        <div class="fields">
+          <label class="lbl">ลิงก์รูป (https)</label>
+          <input class="inp" v-model.trim="form.img" @input="imgOk = true" :maxlength="d.limits.img" placeholder="https://...">
+          <label class="lbl">ข้อความ <b>{{ len(form.text) }}/{{ d.limits.text }}</b></label>
+          <textarea class="inp area" v-model="form.text" :maxlength="d.limits.text" placeholder="พูดอะไรสักหน่อย"></textarea>
+        </div>
+      </div>
+      <div class="socials">
+        <div class="soc"><span class="ico ig"><iconify-icon icon="mdi:instagram"></iconify-icon></span><input class="inp" v-model.trim="form.ig" :maxlength="d.limits.name + 1" placeholder="Instagram"></div>
+        <div class="soc"><span class="ico fb"><iconify-icon icon="mdi:facebook"></iconify-icon></span><input class="inp" v-model.trim="form.fb" :maxlength="d.limits.name + 1" placeholder="Facebook"></div>
+        <div class="soc"><span class="ico tt"><iconify-icon icon="ic:baseline-tiktok"></iconify-icon></span><input class="inp" v-model.trim="form.tt" :maxlength="d.limits.name + 1" placeholder="TikTok"></div>
+      </div>
+      <div class="sub-info">
+        <span><iconify-icon icon="mdi:timer-outline"></iconify-icon>โชว์ {{ d.duration }} วินาที แล้วหาย</span>
+        <span><iconify-icon icon="mdi:account-clock"></iconify-icon>คิวบนจอ {{ d.queue }}{{ d.wait > 0 ? ' (~' + d.wait + ' วิ)' : '' }}</span>
+        <span><iconify-icon icon="mdi:shield-check"></iconify-icon>แอดมินอนุมัติก่อนขึ้นจอ</span>
+      </div>
+      <div class="actions">
+        <div class="price">{{ d.price > 0 ? money(d.price) : 'ฟรี' }}</div>
+        <div class="grow"></div>
+        <button class="btn primary" @click="submit" :disabled="busy || !canSubmit"><iconify-icon icon="mdi:send"></iconify-icon>ส่งให้แอดมิน</button>
+      </div>
+    </div>
+
+    <!-- ================= แอดมิน ================= -->
+    <div class="body admin" v-if="mode === 'admin'">
+      <div class="tabs">
+        <div class="tab" :class="{ active: tab === 'pending' }" @click="setTab('pending')">รออนุมัติ <b>{{ d.pending.length }}</b></div>
+        <div class="tab" :class="{ active: tab === 'boards' }" @click="setTab('boards')">จอวาร์ป <b>{{ d.boards.length }}</b></div>
+      </div>
+
+      <div class="list" v-if="tab === 'pending'">
+        <div class="empty" v-if="!d.pending.length">ไม่มีวาร์ปรออนุมัติ</div>
+        <div class="post" v-for="p in d.pending" :key="p.id">
+          <img class="post-img" :src="p.post.img">
+          <div class="post-info">
+            <p class="post-name">{{ p.name }} <span class="g">#{{ p.group }}</span> <span class="paid" v-if="p.paid > 0">{{ money(p.paid) }}</span></p>
+            <p class="post-text">{{ p.post.text || '-' }}</p>
+            <p class="post-soc">
+              <span v-if="p.post.ig"><iconify-icon icon="mdi:instagram"></iconify-icon>{{ p.post.ig }}</span>
+              <span v-if="p.post.fb"><iconify-icon icon="mdi:facebook"></iconify-icon>{{ p.post.fb }}</span>
+              <span v-if="p.post.tt"><iconify-icon icon="ic:baseline-tiktok"></iconify-icon>{{ p.post.tt }}</span>
+            </p>
+            <p class="post-url">{{ p.post.img }}</p>
+          </div>
+          <div class="post-act">
+            <button class="btn primary sm" @click="admin('approve', { id: p.id })" :disabled="busy"><iconify-icon icon="mdi:check"></iconify-icon>อนุมัติ</button>
+            <button class="btn danger sm" @click="admin('reject', { id: p.id })" :disabled="busy"><iconify-icon icon="mdi:close"></iconify-icon>ปฏิเสธ</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="list" v-if="tab === 'boards'">
+        <div class="create">
+          <div class="create-row">
+            <label class="lbl">กลุ่ม</label>
+            <input class="inp" v-model.trim="newGroup" placeholder="เช่น bar_a" maxlength="24">
+            <label class="lbl">กว้าง (ม.)</label>
+            <input class="inp w80" type="number" step="0.1" v-model.number="newWidth">
+          </div>
+          <div class="create-row">
+            <button class="btn primary sm" @click="admin('createFree', { group: newGroup, w: newWidth })" :disabled="busy || !groupOk(newGroup)"><iconify-icon icon="mdi:monitor-screenshot"></iconify-icon>วางจอใส</button>
+            <button class="btn sm" @click="admin('attachTv', { group: newGroup })" :disabled="busy || !groupOk(newGroup)"><iconify-icon icon="mdi:television"></iconify-icon>ใช้ทีวีใกล้ตัว (5 ม.)</button>
+            <span class="note">จอที่ชื่อกลุ่มเดียวกัน = ใช้คิวเดียวกัน โชว์คนเดียวกันพร้อมกัน</span>
+          </div>
+        </div>
+        <div class="empty" v-if="!d.boards.length">ยังไม่มีจอวาร์ป</div>
+        <div class="brd" v-for="b in d.boards" :key="b.key">
+          <iconify-icon class="brd-ico" :icon="b.kind === 'free' ? 'mdi:monitor-screenshot' : 'mdi:television'"></iconify-icon>
+          <div class="brd-info">
+            <p><b>#{{ b.group }}</b> <span class="dim">{{ b.kind === 'free' ? 'จอใส' : 'ทีวี' }} · {{ b.key }}</span></p>
+            <p class="dim">คิวรอขึ้นจอ {{ b.queue }} · {{ b.x.toFixed(1) }}, {{ b.y.toFixed(1) }}, {{ b.z.toFixed(1) }}</p>
+          </div>
+          <input class="inp w120" v-model.trim="editGroup[b.key]" :placeholder="b.group" maxlength="24">
+          <button class="btn sm" @click="admin('setGroup', { key: b.key, group: editGroup[b.key] })" :disabled="busy || !groupOk(editGroup[b.key])">ย้ายกลุ่ม</button>
+          <button class="btn sm" @click="admin('goto', { key: b.key })"><iconify-icon icon="mdi:map-marker"></iconify-icon></button>
+          <button class="btn sm" @click="admin('skip', { group: b.group })" :disabled="busy" title="ล้างคิว"><iconify-icon icon="mdi:playlist-remove"></iconify-icon></button>
+          <button class="btn danger sm" @click="admin('delete', { key: b.key })" :disabled="busy"><iconify-icon icon="mdi:delete"></iconify-icon></button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= เลือกรุ่นทีวีที่จะวาง ================= -->
+    <div class="body" v-if="mode === 'place'">
+      <div class="models">
+        <button class="model" v-for="m in d.models" :key="m.model" @click="place(m.model)" @mouseenter="hover">
+          <iconify-icon icon="mdi:television-classic"></iconify-icon>
+          <b>{{ m.label }}</b>
+          <span>{{ m.model }}</span>
+        </button>
+      </div>
+    </div>
+
+  </div>
+  </transition>
+</div>
+<script src="ui.js"></script>
+</body>
+</html>
