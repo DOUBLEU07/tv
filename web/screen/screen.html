@@ -106,10 +106,14 @@
   }
   .empty .big { font-size: 84px; font-weight: 700; letter-spacing: 6px; color: rgba(255, 255, 255, 0.9); }
   .empty .small { font-size: 32px; color: var(--ink-dim); }
-  .empty .price {
-    margin-top: 14px; font-size: 30px; font-weight: 600; padding: 8px 30px; border-radius: 999px;
-    background: rgba(13, 207, 199, 0.16); color: var(--accent); box-shadow: inset 0 0 0 2px rgba(13, 207, 199, 0.5);
+  .empty .how { margin-top: 10px; display: flex; align-items: center; gap: 16px; font-size: 34px; font-weight: 500; color: var(--ink); }
+  .empty .key {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-width: 96px; height: 64px; padding: 0 22px;
+    border-radius: 16px; font-size: 30px; font-weight: 700; letter-spacing: 2px; color: var(--accent);
+    background: rgba(13, 207, 199, 0.14); box-shadow: inset 0 0 0 3px rgba(13, 207, 199, 0.6), 0 5px 0 rgba(13, 207, 199, 0.35);
   }
+  .empty .key svg { width: 34px; height: 34px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .empty .plus { font-size: 34px; color: var(--ink-dim); }
 </style>
 </head>
 <body>
@@ -489,8 +493,6 @@
   // =========================================================================================
   var boardRev = null;
 
-  function money(n) { return '$' + Number(n || 0).toLocaleString('en-US'); }
-
   function onBoard(msg) {
     if (rev !== null) { clearPlayer(); rev = null; }
     show('board');
@@ -519,9 +521,10 @@
       body.innerHTML =
         '<div class="empty">' +
           '<div class="big">ว่าง</div>' +
-          '<div class="small">กด E ที่จอ เพื่อลงวาร์ปของคุณ</div>' +
-          '<div class="small">โชว์ ' + esc(msg.dur) + ' วินาที</div>' +
-          '<div class="price">' + (msg.price > 0 ? 'ราคา ' + money(msg.price) : 'ฟรี') + '</div>' +
+          '<div class="how"><span class="key">ALT</span><span class="plus">+</span>' +
+            '<span class="key"><svg viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="18" rx="6"/><path d="M12 3v6"/></svg>คลิก</span>' +
+            '<span>ที่จอ</span></div>' +
+          '<div class="small">เพื่อลงวาร์ปของคุณ · โชว์ ' + esc(msg.dur) + ' วินาที</div>' +
         '</div>';
       return;
     }
