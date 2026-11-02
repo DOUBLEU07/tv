@@ -34,22 +34,34 @@
     </div>
 
     <!-- ================= รีโมททีวี ================= -->
-    <div class="body" v-if="mode === 'remote'">
-      <div class="now" :class="{ off: !d.playing }">
+    <div class="body" v-if="mode === 'remote'" :class="{ scroll: d.private }">
+      <div class="now" :class="{ off: !d.playing, wait: d.playing && (d.playing.gate || d.playing.paused) }">
         <div class="now-dot"></div>
         <div class="now-info" v-if="d.playing">
-          <p class="now-title">{{ d.playing.provider }}<template v-if="d.playing.music"> · เพลง</template> <span>เปิดโดย {{ d.playing.by }}</span></p>
+          <p class="now-title">{{ d.playing.provider }}<template v-if="d.playing.music"> · เพลง</template><template v-if="d.playing.paused"> · หยุดชั่วคราว</template> <span>เปิดโดย {{ d.playing.by }}</span></p>
           <p class="now-url">{{ d.playing.url }}</p>
           <p class="now-warn" v-if="d.playing.audio === 'mute'">เว็บนี้ปรับเสียงละเอียดไม่ได้ (เปิด/ปิดตามระยะ)</p>
           <p class="now-warn" v-if="d.playing.audio === false">เว็บนี้คุมเสียงไม่ได้ จอจะเล่นเฉพาะตอนอยู่ใกล้</p>
+          <p class="now-warn" v-if="d.playing.audio === 'none'">รูปภาพ ไม่มีเสียง</p>
         </div>
         <div class="now-info" v-else><p class="now-title">ทีวีปิดอยู่</p></div>
+      </div>
+
+      <!-- จอส่วนตัว : รอทุกคนพ้นโฆษณา -->
+      <div class="gate" v-if="d.playing && d.playing.gate">
+        <iconify-icon icon="mdi:timer-sand"></iconify-icon>
+        <div class="gate-info">
+          <p>รอทุกคนพ้นโฆษณา · พร้อม <b>{{ d.playing.gate.r }}/{{ d.playing.gate.n }}</b> · เริ่มเองใน <b>{{ gateLeft }}</b> วิ</p>
+          <p class="dim" v-if="d.playing.waiting && d.playing.waiting.length">ยังติดโฆษณา: {{ d.playing.waiting.join(', ') }}</p>
+          <p class="dim">ข้ามโฆษณาได้ที่ปุ่ม "แตะจอ / ข้ามโฆษณา" ด้านล่าง</p>
+        </div>
+        <button class="btn primary sm" v-if="d.canControl" @click="gateStart" :disabled="busy"><iconify-icon icon="mdi:play"></iconify-icon>เริ่มเลย</button>
       </div>
 
       <template v-if="d.canControl">
         <label class="lbl">ลิงก์</label>
         <div class="row">
-          <input class="inp" v-model="url" placeholder="วางลิงก์ YouTube / TikTok / Facebook / Twitch / Kick" @keydown.enter="play" maxlength="500">
+          <input class="inp" v-model="url" placeholder="วางลิงก์ YouTube / TikTok / Facebook / Twitch / Kick / ลิงก์รูป" @keydown.enter="play" maxlength="500">
           <button class="btn primary" @click="play" :disabled="busy || !url"><iconify-icon icon="mdi:play"></iconify-icon>เปิด</button>
         </div>
         <label class="check" :class="{ on: music }" @click.prevent="music = !music">
@@ -62,6 +74,7 @@
           <span class="chip"><iconify-icon icon="mdi:facebook"></iconify-icon>Facebook</span>
           <span class="chip"><iconify-icon icon="mdi:twitch"></iconify-icon>Twitch</span>
           <span class="chip"><iconify-icon icon="simple-icons:kick"></iconify-icon>Kick</span>
+          <span class="chip"><iconify-icon icon="mdi:image"></iconify-icon>รูป .jpg .png .gif .webp</span>
         </div>
 
         <template v-if="d.playing && d.playing.canSeek">
@@ -81,15 +94,43 @@
         <label class="lbl">เสียงทีวี (ทุกคนได้ยินเท่านี้) <b>{{ vol }}%</b></label>
         <input type="range" class="range" min="0" max="100" v-model.number="vol" @change="setVol" :disabled="!d.playing">
       </template>
+      <p class="note" v-else-if="d.private"><iconify-icon icon="mdi:lock"></iconify-icon> จอนี้คุมได้เฉพาะเจ้าของ ({{ d.ownerName }})</p>
       <p class="note" v-else><iconify-icon icon="mdi:lock"></iconify-icon> ทีวีนี้คุมได้เฉพาะแอดมิน{{ d.ownerName ? ' / เจ้าของ (' + d.ownerName + ')' : '' }}</p>
 
       <label class="lbl">เสียงของฉัน (ได้ยินคนเดียว) <b>{{ personal }}%</b></label>
       <input type="range" class="range" min="0" max="100" v-model.number="personal" @change="setPersonal">
 
+      <!-- จอส่วนตัว : สมาชิก -->
+      <template v-if="d.private">
+        <label class="lbl">สมาชิก (เห็นจอ + ได้ยิน เฉพาะคนในนี้) <b>{{ d.private.members.length }}/{{ d.private.max }}</b></label>
+        <div class="members">
+          <span class="chip owner"><iconify-icon icon="mdi:crown"></iconify-icon>{{ d.ownerName }}</span>
+          <span class="chip" v-for="m in d.private.members" :key="m.mid" :class="{ off: !m.online }" :title="m.online ? '' : 'ออฟไลน์'">
+            {{ m.name }}
+            <button class="chip-x" v-if="d.private.owner" @click="member('remove', m.mid)" :disabled="busy"><iconify-icon icon="mdi:close"></iconify-icon></button>
+          </span>
+          <span class="chip off" v-for="(n, i) in (d.private.invites || [])" :key="'inv' + i" title="รอตอบคำเชิญ"><iconify-icon icon="mdi:clock-outline"></iconify-icon>{{ n }}</span>
+        </div>
+        <template v-if="d.private.owner">
+          <div class="row">
+            <input class="inp" type="number" min="1" v-model.number="addId" placeholder="ID ผู้เล่น" @keydown.enter="addMember(addId)">
+            <button class="btn primary" @click="addMember(addId)" :disabled="busy || !addId || memberFull"><iconify-icon icon="mdi:account-plus"></iconify-icon>เพิ่ม</button>
+          </div>
+          <p class="note" v-if="d.private.addDistance > 0">ใส่ ID ผู้เล่น (ต้องห่างไม่เกิน {{ d.private.addDistance }} ม.)</p>
+          <label class="check" :class="{ on: d.private.memberCtl }" @click.prevent="member('ctl', !d.private.memberCtl)">
+            <span class="box"><iconify-icon icon="mdi:check" v-if="d.private.memberCtl"></iconify-icon></span>
+            <iconify-icon icon="mdi:remote-tv"></iconify-icon>ให้สมาชิกคุมจอได้ (เปิดลิงก์ / หยุด / กรอ / เสียง)
+          </label>
+        </template>
+      </template>
+
       <div class="actions">
-        <button class="btn danger" v-if="d.canRemove" @click="remove" :disabled="busy"><iconify-icon icon="mdi:delete"></iconify-icon>เก็บทีวี</button>
+        <button class="btn danger" v-if="d.canRemove" @click="remove" :disabled="busy"><iconify-icon icon="mdi:delete"></iconify-icon>{{ d.private ? 'เก็บจอ' : 'เก็บทีวี' }}</button>
+        <button class="btn danger" v-if="d.private && !d.private.owner" @click="leave" :disabled="busy"><iconify-icon icon="mdi:logout"></iconify-icon>ออกจากจอ</button>
         <div class="grow"></div>
         <button class="btn" v-if="d.playing" @click="touch" title="เล็งแล้วคลิกบนจอ เช่น กด Skip โฆษณา (เฉพาะจอของคุณ)"><iconify-icon icon="mdi:gesture-tap"></iconify-icon>แตะจอ / ข้ามโฆษณา</button>
+        <button class="btn" v-if="d.canControl && d.playing && d.playing.canPause && !d.playing.paused" @click="pause(true)" :disabled="busy"><iconify-icon icon="mdi:pause"></iconify-icon>หยุด</button>
+        <button class="btn primary" v-if="d.canControl && d.playing && d.playing.canPause && d.playing.paused" @click="pause(false)" :disabled="busy"><iconify-icon icon="mdi:play"></iconify-icon>เล่นต่อ</button>
         <button class="btn" v-if="d.canControl && d.playing" @click="stop" :disabled="busy"><iconify-icon icon="mdi:stop"></iconify-icon>ปิดทีวี</button>
       </div>
     </div>
@@ -143,7 +184,7 @@
         <div class="brd" v-for="t in d.nearby" :key="t.key">
           <iconify-icon class="brd-ico" :icon="t.provider ? 'mdi:television-play' : 'mdi:television'" :class="{ off: !t.provider }"></iconify-icon>
           <div class="brd-info">
-            <p><b>{{ t.model }}</b> <span class="dim">{{ t.dist }} ม.{{ t.placed ? ' · วางเอง' : '' }}</span></p>
+            <p><b>{{ t.model }}</b> <span class="dim">{{ t.dist }} ม.{{ t.placed ? ' · วางเอง' : '' }}{{ t.config ? ' · config' : '' }}</span></p>
             <p class="dim" v-if="t.board">จอวาร์ป #{{ t.board }}</p>
             <p class="dim" v-else-if="t.provider">{{ t.provider }} · {{ t.by }} · {{ t.url }}</p>
             <p class="dim" v-else>ปิดอยู่</p>
@@ -190,16 +231,16 @@
         </div>
         <div class="empty" v-if="!d.boards.length">ยังไม่มีจอวาร์ป</div>
         <div class="brd" v-for="b in d.boards" :key="b.key">
-          <iconify-icon class="brd-ico" :icon="b.kind === 'free' ? 'mdi:monitor-screenshot' : 'mdi:television'"></iconify-icon>
+          <iconify-icon class="brd-ico" :icon="b.kind === 'tv' ? 'mdi:television' : 'mdi:monitor-screenshot'"></iconify-icon>
           <div class="brd-info">
-            <p><b>#{{ b.group }}</b> <span class="dim">{{ b.kind === 'free' ? 'จอใส' : 'ทีวี' }} · {{ b.key }}</span></p>
+            <p><b>#{{ b.group }}</b> <span class="dim">{{ b.kind === 'free' ? 'จอใส' : b.kind === 'config' ? 'จอแผ่น (config)' : 'ทีวี' }} · {{ b.key }}</span></p>
             <p class="dim">คิวรอขึ้นจอ {{ b.queue }} · {{ b.x.toFixed(1) }}, {{ b.y.toFixed(1) }}, {{ b.z.toFixed(1) }}</p>
           </div>
           <input class="inp w120" v-model.trim="editGroup[b.key]" :placeholder="b.group" maxlength="24">
           <button class="btn sm" @click="admin('setGroup', { key: b.key, group: editGroup[b.key] })" :disabled="busy || !groupOk(editGroup[b.key])">ย้ายกลุ่ม</button>
           <button class="btn sm" @click="admin('goto', { key: b.key })"><iconify-icon icon="mdi:map-marker"></iconify-icon></button>
           <button class="btn sm" @click="admin('skip', { group: b.group })" :disabled="busy" title="ล้างคิว"><iconify-icon icon="mdi:playlist-remove"></iconify-icon></button>
-          <button class="btn danger sm" @click="admin('delete', { key: b.key })" :disabled="busy"><iconify-icon icon="mdi:delete"></iconify-icon></button>
+          <button class="btn danger sm" v-if="b.kind !== 'config'" @click="admin('delete', { key: b.key })" :disabled="busy"><iconify-icon icon="mdi:delete"></iconify-icon></button>
         </div>
       </div>
     </div>

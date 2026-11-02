@@ -18,6 +18,7 @@ client_scripts {
     "client/main.lua",
     "client/render.lua",
     "client/place.lua",
+    "client/click.lua",
 }
 
 ui_page "web/index.html"

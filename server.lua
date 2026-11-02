@@ -18,6 +18,16 @@ local NextPost = 1
 local Refund = {}       --@ [identifier] = เงินคืนที่ค้าง (คนออกเกมตอนโดนปฏิเสธ)
 local Admins = {}       --@ [src] = true : แอดมินที่ออนไลน์ (ไว้แจ้งเตือนโพสต์ใหม่ ไม่ต้องวนผู้เล่นทั้งเซิร์ฟ)
 local RateLast = {}     --@ [src] = { [action] = GetGameTimer() }
+--@ จอส่วนตัว "u:<id>" : [key] = { key, owner(identifier), ownerSrc, ownerName, x, y, z, h, w, ht, bucket, members = { [identifier] = { name, mid } }, memberCtl }
+local Private = {}
+local PrivateOf = {}    --@ [identifier เจ้าของ] = key
+local PrivateCount = 0
+local NextPrivate = 1
+local NextMid = 1
+local Invites = {}      --@ [src คนถูกเชิญ] = key จอที่เชิญ (ตัวคำเชิญจริงอยู่ที่ p.invites[identifier])
+--@ identifier <-> src ของคนที่ออนไลน์ (ส่งของจอส่วนตัวหาสมาชิกโดยไม่ต้องวนผู้เล่นทั้งเซิร์ฟ)
+local IdentSrc = {}
+local SrcIdent = {}
 
 local function Now()
     return GetGameTimer() / 1000.0
@@ -83,11 +93,82 @@ local function Near(src, pos, dist)
     return p and #(p - pos) <= dist
 end
 
---@ ระยะคุมทีวี : แอดมินคุมจาก /tvadmin ได้ไกลกว่า
-local function NearTv(src, pos)
-    local dist = Config.InteractDistance + 4.0
+--@ ================================================================================================
+--@ จอส่วนตัว : สิทธิ์ + คนที่ได้รับข้อมูล
+--@ ================================================================================================
+local function Track(src, ident)
+    local old = SrcIdent[src]
+    if old and old ~= ident and IdentSrc[old] == src then IdentSrc[old] = nil end
+    SrcIdent[src] = ident
+    IdentSrc[ident] = src
+end
+
+--@ -> "owner" | "member" | nil
+--@ ใช้ identifier ที่จำไว้ก่อน (GetPlayerFromId ข้าม resource แพง ห้ามวนเรียก)
+local function IdentOf(src)
+    local ident = SrcIdent[src]
+    if ident then return ident end
+    local xPlayer = GetX(src)
+    if not xPlayer then return nil end
+    Track(src, xPlayer.identifier)
+    return xPlayer.identifier
+end
+
+local function PrivateRole(src, key)
+    local p = Private[key]
+    local ident = p and IdentOf(src)
+    if not ident then return nil end
+    if ident == p.owner then return "owner" end
+    if p.members[ident] then return "member" end
+    return nil
+end
+
+local function CanSeePrivate(src, key)
+    local p = Private[key]
+    return p ~= nil and PrivateRole(src, key) ~= nil and GetPlayerRoutingBucket(src) == p.bucket
+end
+
+--@ คนที่ได้รับ event ของจอนี้ : จอส่วนตัว = เจ้าของ + สมาชิกที่ออนไลน์ / จออื่น = nil (ส่งทุกคน)
+local function Audience(key)
+    if key:sub(1, 1) ~= "u" then return nil end
+    local p = Private[key]
+    if not p then return {} end
+    local list = { p.ownerSrc }
+    for ident in pairs(p.members) do
+        local s = IdentSrc[ident]
+        if s then list[#list + 1] = s end
+    end
+    return list
+end
+
+local function Emit(key, event, ...)
+    local aud = Audience(key)
+    if not aud then return TriggerClientEvent(event, -1, ...) end
+    for i = 1, #aud do TriggerClientEvent(event, aud[i], ...) end
+end
+
+--@ ระยะคุมจอ : เผื่อ Alt+คลิกจากไกล + จอแผ่นใหญ่วัดจากกลางจอ ; แอดมินคุมจาก /tvadmin ได้ไกลกว่า
+local function Reach(src, key)
+    local dist = math.max(Config.InteractDistance + 4.0, (Config.Click and Config.Click.Distance or 0) + 1.0)
+    local kind = key:sub(1, 1)
+    if kind == "c" then
+        local s = Shared.Screens[key]
+        if s then dist = math.max(dist, s.range + 1.0) end
+    elseif kind == "f" then
+        local b = Boards[key]
+        if b then dist = dist + math.max(b.w or 2.0, b.ht or 0.0) * 0.5 end
+    elseif kind == "u" then
+        local p = Private[key]
+        if p then dist = dist + math.max(p.w, p.ht) * 0.5 end
+    end
     if IsAdmin(src) then dist = math.max(dist, Config.TV.AdminRange or 0) end
-    return Near(src, pos, dist)
+    return dist
+end
+
+--@ จอส่วนตัว : ต้องเป็นเจ้าของ/สมาชิก และอยู่มิติเดียวกับจอ (แอดมินก็ไม่ยกเว้น)
+local function NearTv(src, key, pos)
+    if key:sub(1, 1) == "u" and not CanSeePrivate(src, key) then return false end
+    return Near(src, pos, Reach(src, key))
 end
 
 --@ ================================================================================================
@@ -101,6 +182,12 @@ local function ScreenPos(key, meta)
     elseif kind == "f" then
         local b = Boards[key]
         return b and vector3(b.x, b.y, b.z)
+    elseif kind == "c" then
+        local c = Shared.Screens[key]
+        return c and vector3(c.x, c.y, c.z)
+    elseif kind == "u" then
+        local p = Private[key]
+        return p and vector3(p.x, p.y, p.z)
     elseif kind == "m" then
         --@ ทีวีในแมพ : เซิร์ฟไม่เห็น object ในแมพ เลยสร้าง key ใหม่จาก model+พิกัดที่ client ส่งมา ต้องตรงกัน
         if type(meta) ~= "table" then return nil end
@@ -114,7 +201,13 @@ local function ScreenPos(key, meta)
 end
 
 local function CanControl(src, key)
+    if key:sub(1, 1) == "u" then
+        local role = PrivateRole(src, key)
+        return role == "owner" or (role == "member" and Private[key].memberCtl == true)
+    end
     if IsAdmin(src) then return true end
+    local cs = Shared.Screens[key]
+    if cs then return not cs.admin and Config.TV.ControlWho == "everyone" end
     if key:sub(1, 1) == "p" then
         local p = Props[tonumber(key:sub(3))]
         local xPlayer = GetX(src)
@@ -126,24 +219,117 @@ end
 --@ ================================================================================================
 --@ ทีวีเปิดลิงก์
 --@ ================================================================================================
+local PublicPlay
+
 local function SetPlay(key, state)
     if Play[key] and not state then PlayCount = PlayCount - 1 end
     if not Play[key] and state then PlayCount = PlayCount + 1 end
     Play[key] = state
     --@ เปลี่ยนเฉพาะตอนมีคนกด (นานๆครั้ง) ส่งทุกคนครั้งเดียว ให้ client คนที่อยู่ใกล้จอตัดสินใจเองว่าจะวาด
-    TriggerClientEvent(script .. ":cl:play", -1, key, state, Now())
+    --@ จอส่วนตัว = ส่งเฉพาะเจ้าของ + สมาชิก
+    Emit(key, script .. ":cl:play", key, state and PublicPlay(state), Now())
 end
 
-local function PublicPlay(state)
+PublicPlay = function(state)
     if not state then return nil end
-    return { media = state.media, startAt = state.startAt, vol = state.vol, by = state.by, id = state.id, seek = state.seek }
+    local g = state.gate
+    return {
+        media = state.media, startAt = state.startAt, vol = state.vol, by = state.by, id = state.id, seek = state.seek,
+        paused = state.paused, pausePos = state.pausePos,
+        gate = g and { r = g.r, n = g.n, endsAt = g.endsAt } or nil,
+    }
+end
+
+--@ ================================================================================================
+--@ รอทุกคนพ้นโฆษณา (จอส่วนตัว + YouTube วิดีโอ)
+--@ need = คนที่ต้องรอ (เจ้าของ/สมาชิกที่ยืนในระยะวาดจอ มิติเดียวกัน ตอนกดเปิด) ; ready = จอของคนนั้นพ้นโฆษณาแล้ว
+--@ ================================================================================================
+local function NewGate(key, pos)
+    local p = Private[key]
+    local need, n = {}, 0
+    for _, s in ipairs(Audience(key)) do
+        if not need[s] and GetPlayerRoutingBucket(s) == p.bucket and Near(s, pos, Config.Render.Distance) then
+            need[s] = true
+            n = n + 1
+        end
+    end
+    if n == 0 then return nil end
+    return { need = need, ready = {}, n = n, r = 0, endsAt = Now() + Config.Private.AdWait }
+end
+
+local function StartGate(key)
+    local st = Play[key]
+    if not st or not st.gate then return end
+    st.gate = nil
+    st.startAt = Now() - (st.media.s or 0)
+    st.seek = (st.seek or 0) + 1
+    Emit(key, script .. ":cl:play", key, PublicPlay(st), Now())
+end
+
+--@ คนที่รออยู่ออกเกม / โดนลบออกจากสมาชิก : ไม่ต้องรอแล้ว
+local function GateForget(src, onlyKey)
+    for key, st in pairs(Play) do
+        local g = st.gate
+        if g and g.need[src] and (not onlyKey or onlyKey == key) then
+            g.need[src] = nil
+            g.n = g.n - 1
+            if g.ready[src] then g.ready[src] = nil; g.r = g.r - 1 end
+            if g.r >= g.n then StartGate(key) else Emit(key, script .. ":cl:play", key, PublicPlay(st), Now()) end
+        end
+    end
+end
+
+local function GateWaiting(st)
+    local list = {}
+    if not (st and st.gate) then return list end
+    for s in pairs(st.gate.need) do
+        if not st.gate.ready[s] then list[#list + 1] = NameOf(GetX(s), s) end
+    end
+    table.sort(list)
+    return list
+end
+
+--@ จอของคนนี้ : เนื้อคลิปเริ่มแล้ว (พ้นโฆษณา) หยุดรอที่วินาทีแรก
+RegisterNetEvent(script .. ":sv:adReady", function(key, id)
+    local src = source
+    local st = type(key) == "string" and Play[key]
+    local g = st and st.gate
+    if not g or st.id ~= tonumber(id) or not g.need[src] or g.ready[src] then return end
+    g.ready[src] = true
+    g.r = g.r + 1
+    if g.r >= g.n then StartGate(key) else Emit(key, script .. ":cl:play", key, PublicPlay(st), Now()) end
+end)
+
+--@ สมาชิกของจอส่วนตัว (ไม่ส่ง identifier ให้ client ใช้ mid แทน)
+local function MemberList(p)
+    local list = {}
+    for ident, m in pairs(p.members) do
+        list[#list + 1] = { mid = m.mid, name = m.name, online = IdentSrc[ident] ~= nil }
+    end
+    table.sort(list, function(a, b) return a.mid < b.mid end)
+    return list
+end
+
+--@ คำเชิญที่ยังไม่หมดเวลา (หมดแล้วลบทิ้งตรงนี้) -> จำนวน, รายชื่อ
+local function LiveInvites(p)
+    local now, names = Now(), {}
+    for ident, inv in pairs(p.invites) do
+        if inv.expires <= now then
+            p.invites[ident] = nil
+            if Invites[inv.src] == p.key then Invites[inv.src] = nil end
+        else
+            names[#names + 1] = inv.name
+        end
+    end
+    table.sort(names)
+    return #names, names
 end
 
 lib.callback.register(script .. ":sv:tvInfo", function(src, key, meta)
     if type(key) ~= "string" then return nil end
     local pos = ScreenPos(key, meta)
     IsAdmin(src)
-    if not pos or not NearTv(src, pos) then return nil end
+    if not pos or not NearTv(src, key, pos) then return nil end
     if Boards[key] then return { board = true } end
 
     local res = {
@@ -158,6 +344,14 @@ lib.callback.register(script .. ":sv:tvInfo", function(src, key, meta)
         local xPlayer = GetX(src)
         res.canRemove = p and (IsAdmin(src) or (xPlayer and p.owner == xPlayer.identifier)) or false
         res.ownerName = p and p.ownerName
+    elseif key:sub(1, 1) == "u" then
+        local p = Private[key]
+        local owner = PrivateRole(src, key) == "owner"
+        res.canRemove = owner
+        res.ownerName = p.ownerName
+        res.private = { owner = owner, memberCtl = p.memberCtl == true, max = Config.Private.MaxMembers, members = MemberList(p), addDistance = Config.Private.AddDistance }
+        if owner then res.private.invites = select(2, LiveInvites(p)) end
+        res.waiting = GateWaiting(Play[key])
     end
     return res
 end)
@@ -165,7 +359,7 @@ end)
 lib.callback.register(script .. ":sv:tvPlay", function(src, key, meta, url, vol, music)
     if type(key) ~= "string" then return { ok = false, msg = "ไม่พบทีวี" } end
     local pos = ScreenPos(key, meta)
-    if not pos or not NearTv(src, pos) then return { ok = false, msg = "อยู่ไกลทีวีเกินไป" } end
+    if not pos or not NearTv(src, key, pos) then return { ok = false, msg = "อยู่ไกลทีวีเกินไป" } end
     if Boards[key] then return { ok = false, msg = "ทีวีนี้เป็นจอวาร์ป" } end
     if not CanControl(src, key) then return { ok = false, msg = "คุณไม่มีสิทธิ์คุมทีวีนี้" } end
     if not RateOk(src, "play", Config.TV.Cooldown) then return { ok = false, msg = "ใจเย็นๆ กดถี่เกินไป" } end
@@ -179,8 +373,14 @@ lib.callback.register(script .. ":sv:tvPlay", function(src, key, meta, url, vol,
     local xPlayer = GetX(src)
     vol = math.floor(math.max(0, math.min(100, tonumber(vol) or Config.TV.DefaultVolume)))
     NextPlayId = NextPlayId + 1
+    local id = NextPlayId
+    --@ จอส่วนตัว + YouTube วิดีโอ : รอทุกคนพ้นโฆษณาก่อน (โหมดเพลงไม่มีโฆษณา ไม่ต้องรอ)
+    local gate = nil
+    if key:sub(1, 1) == "u" and media.p == "youtube" and not media.ao and (Config.Private.AdWait or 0) > 0 then
+        gate = NewGate(key, pos)
+    end
     SetPlay(key, {
-        id = NextPlayId,
+        id = id,
         seek = 0,
         media = media,
         startAt = Now() - (media.s or 0),
@@ -188,8 +388,51 @@ lib.callback.register(script .. ":sv:tvPlay", function(src, key, meta, url, vol,
         by = NameOf(xPlayer, src),
         byIdent = xPlayer and xPlayer.identifier,
         at = os.time(),
+        gate = gate,
     })
+    if gate then
+        SetTimeout(math.floor(Config.Private.AdWait * 1000), function()
+            local st = Play[key]
+            if st and st.id == id and st.gate then StartGate(key) end
+        end)
+    end
     Log("play", src, ("เปิดทีวี `%s`\n%s"):format(key, media.url))
+    return { ok = true }
+end)
+
+--@ จอส่วนตัว : หยุดชั่วคราว / เล่นต่อ (pause = true / false)
+lib.callback.register(script .. ":sv:tvPause", function(src, key, meta, pause)
+    local state = type(key) == "string" and Play[key]
+    if not state then return { ok = false, msg = "ทีวีไม่ได้เปิดอยู่" } end
+    if key:sub(1, 1) ~= "u" then return { ok = false, msg = "หยุดชั่วคราวได้เฉพาะจอส่วนตัว" } end
+    if not Shared.CanSeek(state.media) then return { ok = false, msg = "ลิงก์นี้หยุดชั่วคราวไม่ได้" } end
+    local p = ScreenPos(key, meta)
+    if not p or not NearTv(src, key, p) then return { ok = false, msg = "อยู่ไกลทีวีเกินไป" } end
+    if not CanControl(src, key) then return { ok = false, msg = "คุณไม่มีสิทธิ์คุมทีวีนี้" } end
+    if state.gate then return { ok = false, msg = "กำลังรอทุกคนพ้นโฆษณา กด \"เริ่มเลย\" ก่อน" } end
+    if not RateOk(src, "pause", 0.8) then return { ok = false, msg = "ใจเย็นๆ" } end
+    if pause == true and not state.paused then
+        state.paused = true
+        state.pausePos = math.max(0, Now() - state.startAt)
+    elseif pause ~= true and state.paused then
+        state.startAt = Now() - (state.pausePos or 0)
+        state.paused, state.pausePos = nil, nil
+    else
+        return { ok = true }
+    end
+    state.seek = (state.seek or 0) + 1
+    Emit(key, script .. ":cl:play", key, PublicPlay(state), Now())
+    return { ok = true }
+end)
+
+--@ จอส่วนตัว : ไม่รอคนที่ยังติดโฆษณา เริ่มเลย
+lib.callback.register(script .. ":sv:tvGateStart", function(src, key, meta)
+    local state = type(key) == "string" and Play[key]
+    if not state or not state.gate then return { ok = true } end
+    local p = ScreenPos(key, meta)
+    if not p or not NearTv(src, key, p) then return { ok = false, msg = "อยู่ไกลทีวีเกินไป" } end
+    if not CanControl(src, key) then return { ok = false, msg = "คุณไม่มีสิทธิ์คุมทีวีนี้" } end
+    StartGate(key)
     return { ok = true }
 end)
 
@@ -202,10 +445,10 @@ RegisterNetEvent(script .. ":sv:click", function(key, meta, u, v)
     u, v = tonumber(u), tonumber(v)
     if not u or not v or u < 0 or u > 1 or v < 0 or v > 1 then return end
     local p = ScreenPos(key, meta)
-    if not p or not NearTv(src, p) then return end
+    if not p or not NearTv(src, key, p) then return end
     if not CanControl(src, key) then return end
     if not RateOk(src, "click", 0.4) then return end
-    TriggerClientEvent(script .. ":cl:click", -1, key, u, v, src)
+    Emit(key, script .. ":cl:click", key, u, v, src)
 end)
 
 lib.callback.register(script .. ":sv:tvSeek", function(src, key, meta, pos)
@@ -213,20 +456,21 @@ lib.callback.register(script .. ":sv:tvSeek", function(src, key, meta, pos)
     if not state then return { ok = false, msg = "ทีวีไม่ได้เปิดอยู่" } end
     if not Shared.CanSeek(state.media) then return { ok = false, msg = "ลิงก์นี้กรอเวลาไม่ได้" } end
     local p = ScreenPos(key, meta)
-    if not p or not NearTv(src, p) then return { ok = false, msg = "อยู่ไกลทีวีเกินไป" } end
+    if not p or not NearTv(src, key, p) then return { ok = false, msg = "อยู่ไกลทีวีเกินไป" } end
     if not CanControl(src, key) then return { ok = false, msg = "คุณไม่มีสิทธิ์คุมทีวีนี้" } end
     if not RateOk(src, "seek", 0.8) then return { ok = false, msg = "ใจเย็นๆ" } end
+    if state.gate then return { ok = false, msg = "กำลังรอทุกคนพ้นโฆษณา" } end
     pos = math.max(0, math.min(24 * 3600, tonumber(pos) or 0))
-    state.startAt = Now() - pos
+    if state.paused then state.pausePos = pos else state.startAt = Now() - pos end
     state.seek = (state.seek or 0) + 1
-    TriggerClientEvent(script .. ":cl:play", -1, key, PublicPlay(state), Now())
+    Emit(key, script .. ":cl:play", key, PublicPlay(state), Now())
     return { ok = true }
 end)
 
 lib.callback.register(script .. ":sv:tvStop", function(src, key, meta)
     if type(key) ~= "string" or not Play[key] then return { ok = false, msg = "ทีวีไม่ได้เปิดอยู่" } end
     local pos = ScreenPos(key, meta)
-    if not pos or not NearTv(src, pos) then return { ok = false, msg = "อยู่ไกลทีวีเกินไป" } end
+    if not pos or not NearTv(src, key, pos) then return { ok = false, msg = "อยู่ไกลทีวีเกินไป" } end
     if not CanControl(src, key) then return { ok = false, msg = "คุณไม่มีสิทธิ์คุมทีวีนี้" } end
     SetPlay(key, nil)
     Log("stop", src, ("ปิดทีวี `%s`"):format(key))
@@ -237,11 +481,11 @@ lib.callback.register(script .. ":sv:tvVolume", function(src, key, meta, vol)
     local state = type(key) == "string" and Play[key]
     if not state then return { ok = false } end
     local pos = ScreenPos(key, meta)
-    if not pos or not NearTv(src, pos) then return { ok = false, msg = "อยู่ไกลทีวีเกินไป" } end
+    if not pos or not NearTv(src, key, pos) then return { ok = false, msg = "อยู่ไกลทีวีเกินไป" } end
     if not CanControl(src, key) then return { ok = false, msg = "คุณไม่มีสิทธิ์คุมทีวีนี้" } end
     if not RateOk(src, "vol", 0.4) then return { ok = false } end
     state.vol = math.floor(math.max(0, math.min(100, tonumber(vol) or state.vol)))
-    TriggerClientEvent(script .. ":cl:volume", -1, key, state.vol)
+    Emit(key, script .. ":cl:volume", key, state.vol)
     return { ok = true }
 end)
 
@@ -253,6 +497,225 @@ CreateThread(function()
         for key, st in pairs(Play) do
             if st.at < limit then SetPlay(key, nil) end
         end
+    end
+end)
+
+--@ ================================================================================================
+--@ จอส่วนตัว (ไอเทม Config.Private.Item)
+--@ ================================================================================================
+local function PublicPrivate(p)
+    return { key = p.key, x = p.x, y = p.y, z = p.z, h = p.h, w = p.w, ht = p.ht, bucket = p.bucket, ownerName = p.ownerName }
+end
+
+local function RemovePrivate(key)
+    local p = Private[key]
+    if not p then return end
+    if Play[key] then SetPlay(key, nil) end
+    local aud = Audience(key)
+    Private[key] = nil
+    if PrivateOf[p.owner] == key then PrivateOf[p.owner] = nil end
+    PrivateCount = PrivateCount - 1
+    for i = 1, #aud do TriggerClientEvent(script .. ":cl:private", aud[i], key, nil) end
+    for _, inv in pairs(p.invites) do
+        if Invites[inv.src] == key then
+            Invites[inv.src] = nil
+            TriggerClientEvent(script .. ":cl:pvInvite", inv.src, key, nil)
+        end
+    end
+end
+
+local function HasItem(xPlayer)
+    local item = xPlayer and xPlayer.getInventoryItem(Config.Private.Item)
+    return item ~= nil and (item.count or 0) > 0
+end
+
+if Config.Private.Enable then
+    --@ กดใช้ : ยังไม่มีจอ = เล็งวาง / มีจออยู่แล้ว = เก็บ (ไอเทมไม่หาย)
+    ESX.RegisterUsableItem(Config.Private.Item, function(source)
+        local src = source
+        local xPlayer = GetX(src)
+        if not xPlayer then return end
+        Track(src, xPlayer.identifier)
+        local key = PrivateOf[xPlayer.identifier]
+        if key then
+            RemovePrivate(key)
+            Notify(src, "success", "เก็บจอแล้ว")
+            Log("remove", src, ("เก็บจอส่วนตัว `%s`"):format(key))
+            return
+        end
+        if not RateOk(src, "pvuse", 1.5) then return end
+        TriggerClientEvent(script .. ":cl:pvPlace", src)
+    end)
+end
+
+lib.callback.register(script .. ":sv:pvPlace", function(src, x, y, z, h, w)
+    local cfg = Config.Private
+    if not cfg.Enable then return { ok = false, msg = "ปิดระบบจอส่วนตัวอยู่" } end
+    x, y, z, h, w = tonumber(x), tonumber(y), tonumber(z), tonumber(h), tonumber(w)
+    if not (x and y and z and h and w) then return { ok = false, msg = "ข้อมูลไม่ถูกต้อง" } end
+    local xPlayer = GetX(src)
+    if not xPlayer then return { ok = false } end
+    if not HasItem(xPlayer) then return { ok = false, msg = "ไม่มีไอเทมจอ" } end
+    if PrivateOf[xPlayer.identifier] then return { ok = false, msg = "คุณมีจออยู่แล้ว กดใช้ไอเทมอีกครั้งเพื่อเก็บ" } end
+    if PrivateCount >= cfg.MaxTotal then return { ok = false, msg = "จอส่วนตัวทั้งเซิร์ฟเต็มแล้ว" } end
+    if not Near(src, vector3(x, y, z), cfg.MaxDistance + 2.0) then return { ok = false, msg = "วางไกลตัวเกินไป" } end
+    if not RateOk(src, "pvplace", 2) then return { ok = false, msg = "ใจเย็นๆ" } end
+
+    w = math.max(cfg.MinWidth, math.min(cfg.MaxWidth, w))
+    local key = "u:" .. NextPrivate
+    NextPrivate = NextPrivate + 1
+    local p = {
+        key = key, owner = xPlayer.identifier, ownerSrc = src, ownerName = NameOf(xPlayer, src),
+        x = x, y = y, z = z, h = h % 360.0, w = w, ht = w * 9 / 16,
+        bucket = GetPlayerRoutingBucket(src), members = {}, invites = {}, memberCtl = false,
+    }
+    Private[key] = p
+    PrivateOf[p.owner] = key
+    PrivateCount = PrivateCount + 1
+    Track(src, p.owner)
+    TriggerClientEvent(script .. ":cl:private", src, key, PublicPrivate(p))
+    Log("place", src, ("วางจอส่วนตัว `%s` ที่ %.1f, %.1f, %.1f (มิติ %d)"):format(key, x, y, z, p.bucket))
+    return { ok = true }
+end)
+
+lib.callback.register(script .. ":sv:pvRemove", function(src, key)
+    if type(key) ~= "string" or not Private[key] then return { ok = false, msg = "ไม่พบจอ" } end
+    if PrivateRole(src, key) ~= "owner" then return { ok = false, msg = "ไม่ใช่จอของคุณ" } end
+    RemovePrivate(key)
+    Log("remove", src, ("เก็บจอส่วนตัว `%s`"):format(key))
+    return { ok = true }
+end)
+
+--@ จัดการสมาชิก (เจ้าของเท่านั้น) : act = "add" (value = server id) / "remove" (value = mid) / "ctl" (value = true/false)
+lib.callback.register(script .. ":sv:pvMember", function(src, key, act, value)
+    local p = type(key) == "string" and Private[key]
+    if not p then return { ok = false, msg = "ไม่พบจอ" } end
+    if PrivateRole(src, key) ~= "owner" then return { ok = false, msg = "เฉพาะเจ้าของจอ" } end
+    if not NearTv(src, key, vector3(p.x, p.y, p.z)) then return { ok = false, msg = "อยู่ไกลจอเกินไป" } end
+    if not RateOk(src, "pvmember", 0.5) then return { ok = false, msg = "ใจเย็นๆ" } end
+
+    if act == "ctl" then
+        p.memberCtl = value == true
+        return { ok = true }
+    elseif act == "add" then
+        local target = tonumber(value)
+        local xTarget = target and GetX(target)
+        if not xTarget then return { ok = false, msg = "ไม่พบผู้เล่น ID นี้" } end
+        if xTarget.identifier == p.owner then return { ok = false, msg = "คุณเป็นเจ้าของจออยู่แล้ว" } end
+        if p.members[xTarget.identifier] then return { ok = false, msg = "เป็นสมาชิกอยู่แล้ว" } end
+        local n = LiveInvites(p)
+        --@ เชิญซ้ำคนที่ยังไม่ตอบ = ส่งคำเชิญใหม่ (เริ่มนับเวลาใหม่) ไม่นับที่ซ้ำ
+        local again = p.invites[xTarget.identifier] ~= nil
+        if again then n = n - 1 end
+        for _ in pairs(p.members) do n = n + 1 end
+        if n >= Config.Private.MaxMembers then return { ok = false, msg = ("สมาชิกเต็มแล้ว (%d คน รวมคนที่รอตอบ)"):format(Config.Private.MaxMembers) } end
+        --@ คนนี้มีคำเชิญจากจออื่นค้างอยู่ (ยังไม่หมดเวลา) = รอให้ตอบอันนั้นก่อน
+        local other = Invites[target] and Private[Invites[target]]
+        if other and other ~= p then
+            local inv = other.invites[xTarget.identifier]
+            if inv and inv.expires > Now() then return { ok = false, msg = "คนนี้มีคำเชิญอื่นค้างอยู่ ลองใหม่อีกครั้ง" } end
+        end
+        local addD = Config.Private.AddDistance or 0
+        if addD > 0 then
+            local a, b = PedPos(src), PedPos(target)
+            if not a or not b or #(a - b) > addD then return { ok = false, msg = ("ต้องยืนใกล้กันไม่เกิน %.0f เมตร"):format(addD) } end
+        end
+        local timeout = Config.Private.Invite.Timeout
+        local name = NameOf(xTarget, target)
+        local inv = { name = name, src = target, expires = Now() + timeout }
+        p.invites[xTarget.identifier] = inv
+        Invites[target] = key
+        Track(target, xTarget.identifier)
+        TriggerClientEvent(script .. ":cl:pvInvite", target, key, p.ownerName, timeout)
+        Log("board", src, ("%s %s เข้าจอส่วนตัว `%s`"):format(again and "เชิญซ้ำ" or "เชิญ", name, key))
+        --@ ไม่ตอบจนหมดเวลา : บอกเจ้าของ (ยังเป็นคำเชิญอันเดิมอยู่เท่านั้น)
+        SetTimeout(timeout * 1000 + 500, function()
+            if Private[key] == p and p.invites[xTarget.identifier] == inv then
+                p.invites[xTarget.identifier] = nil
+                if Invites[target] == key then Invites[target] = nil end
+                Notify(p.ownerSrc, "info", ("%s ไม่ได้ตอบคำเชิญ (หมดเวลา)"):format(name))
+            end
+        end)
+        return { ok = true, invited = true }
+    elseif act == "remove" then
+        local mid = tonumber(value)
+        for ident, m in pairs(p.members) do
+            if m.mid == mid then
+                p.members[ident] = nil
+                local s = IdentSrc[ident]
+                if s then
+                    TriggerClientEvent(script .. ":cl:private", s, key, nil)
+                    GateForget(s, key)
+                    Notify(s, "info", ("%s เอาคุณออกจากจอทีวีส่วนตัวแล้ว"):format(p.ownerName))
+                end
+                Log("board", src, ("เอา %s ออกจากจอส่วนตัว `%s`"):format(m.name, key))
+                return { ok = true }
+            end
+        end
+        return { ok = false, msg = "ไม่พบสมาชิกคนนี้" }
+    end
+    return { ok = false }
+end)
+
+--@ คนถูกเชิญตอบคำเชิญ (accept = true ยอมรับ / false ปฏิเสธ)
+lib.callback.register(script .. ":sv:pvInviteReply", function(src, key, accept)
+    if type(key) ~= "string" or Invites[src] ~= key then return { ok = false, msg = "คำเชิญนี้ไม่มีแล้ว" } end
+    Invites[src] = nil
+    local p = Private[key]
+    local ident = IdentOf(src)
+    local inv = p and ident and p.invites[ident]
+    if not inv then return { ok = false, msg = "คำเชิญนี้ไม่มีแล้ว" } end
+    p.invites[ident] = nil
+    if inv.expires <= Now() then return { ok = false, msg = "คำเชิญหมดเวลาแล้ว" } end
+    if accept ~= true then
+        Notify(p.ownerSrc, "info", ("%s ปฏิเสธคำเชิญเข้าจอทีวี"):format(inv.name))
+        Log("board", src, ("%s ปฏิเสธคำเชิญจอส่วนตัว `%s` (ค่าที่ส่งมา = %s)"):format(inv.name, key, tostring(accept)))
+        return { ok = true }
+    end
+    local n = 0
+    for _ in pairs(p.members) do n = n + 1 end
+    if n >= Config.Private.MaxMembers then return { ok = false, msg = "สมาชิกจอนี้เต็มแล้ว" } end
+    p.members[ident] = { name = inv.name, mid = NextMid }
+    NextMid = NextMid + 1
+    TriggerClientEvent(script .. ":cl:private", src, key, PublicPrivate(p))
+    if Play[key] then TriggerClientEvent(script .. ":cl:play", src, key, PublicPlay(Play[key]), Now()) end
+    Notify(p.ownerSrc, "success", ("%s เข้าร่วมจอทีวีแล้ว"):format(inv.name))
+    Log("board", src, ("%s รับคำเชิญเข้าจอส่วนตัว `%s`"):format(inv.name, key))
+    return { ok = true }
+end)
+
+--@ สมาชิกกดออกจากจอเอง
+lib.callback.register(script .. ":sv:pvLeave", function(src, key)
+    local p = type(key) == "string" and Private[key]
+    if not p then return { ok = false, msg = "ไม่พบจอ" } end
+    local ident = IdentOf(src)
+    local m = ident and p.members[ident]
+    if not m then return { ok = false, msg = "คุณไม่ได้เป็นสมาชิกจอนี้" } end
+    p.members[ident] = nil
+    TriggerClientEvent(script .. ":cl:private", src, key, nil)
+    GateForget(src, key)
+    Notify(p.ownerSrc, "info", ("%s ออกจากจอทีวีส่วนตัวแล้ว"):format(m.name))
+    Log("board", src, ("%s ออกจากจอส่วนตัว `%s`"):format(m.name, key))
+    return { ok = true }
+end)
+
+--@ มิติของตัวเอง : client ถามเฉพาะตอนมีจอส่วนตัวอยู่ใกล้ (ทุก 3 วิ)
+lib.callback.register(script .. ":sv:pvBucket", function(src)
+    return GetPlayerRoutingBucket(src)
+end)
+
+--@ ไอเทมหลุดจากตัว (ทิ้ง/ให้คนอื่น/โดนยึด) = จอหาย
+AddEventHandler("esx:onRemoveInventoryItem", function(src, itemName, newCount)
+    if itemName ~= Config.Private.Item or (tonumber(newCount) or 0) > 0 then return end
+    local ident = SrcIdent[src]
+    if not ident then
+        local xPlayer = GetX(src)
+        ident = xPlayer and xPlayer.identifier
+    end
+    local key = ident and PrivateOf[ident]
+    if key then
+        RemovePrivate(key)
+        Notify(src, "info", "ไอเทมจอหลุดจากตัว จอถูกเก็บแล้ว")
     end
 end)
 
@@ -318,7 +781,7 @@ lib.callback.register(script .. ":sv:propRemove", function(src, id)
     if not p then return { ok = false, msg = "ไม่พบทีวี" } end
     local xPlayer = GetX(src)
     if not IsAdmin(src) and not (xPlayer and xPlayer.identifier == p.owner) then return { ok = false, msg = "ไม่ใช่ทีวีของคุณ" } end
-    if not NearTv(src, vector3(p.x, p.y, p.z)) and not Near(src, vector3(p.x, p.y, p.z), 8.0) then return { ok = false, msg = "อยู่ไกลทีวีเกินไป" } end
+    if not NearTv(src, "p:" .. id, vector3(p.x, p.y, p.z)) and not Near(src, vector3(p.x, p.y, p.z), 8.0) then return { ok = false, msg = "อยู่ไกลทีวีเกินไป" } end
     RemoveProp(id)
     Log("remove", src, ("เก็บทีวี #%d"):format(id))
     return { ok = true }
@@ -357,6 +820,13 @@ local function PayBack(ident, src, amount, reason)
     Refund[ident] = (Refund[ident] or 0) + amount
 end
 
+--@ จอวาร์ปจาก Config.Screens : มีตั้งแต่สคริปต์เริ่ม (ย้ายกลุ่มได้ ลบไม่ได้)
+for key, c in pairs(Shared.Screens) do
+    if c.mode == "warp" then
+        Boards[key] = { key = key, group = c.group, kind = "config", x = c.x, y = c.y, z = c.z, h = c.h, w = c.w, ht = c.ht }
+    end
+end
+
 local function PendingList()
     local list = {}
     for _, p in pairs(Pending) do
@@ -384,7 +854,7 @@ lib.callback.register(script .. ":sv:boardInfo", function(src, key, meta)
     local b = type(key) == "string" and Boards[key]
     if not b then return nil end
     local pos = ScreenPos(key, meta) or vector3(b.x, b.y, b.z)
-    if not Near(src, pos, Config.InteractDistance + 6.0) then return nil end
+    if not NearTv(src, key, pos) then return nil end
     local q = PruneQueue(b.group)
     return {
         group = b.group,
@@ -400,7 +870,7 @@ lib.callback.register(script .. ":sv:boardSubmit", function(src, key, meta, form
     local b = type(key) == "string" and Boards[key]
     if not b then return { ok = false, msg = "ไม่พบจอ" } end
     local pos = ScreenPos(key, meta) or vector3(b.x, b.y, b.z)
-    if not Near(src, pos, Config.InteractDistance + 6.0) then return { ok = false, msg = "อยู่ไกลจอเกินไป" } end
+    if not NearTv(src, key, pos) then return { ok = false, msg = "อยู่ไกลจอเกินไป" } end
     if type(form) ~= "table" then return { ok = false, msg = "ข้อมูลไม่ถูกต้อง" } end
 
     --@ ตรวจฟอร์ม
@@ -511,13 +981,15 @@ end
 AdminActions.createFree = function(src, d)
     local x, y, z, h, w = tonumber(d.x), tonumber(d.y), tonumber(d.z), tonumber(d.h), tonumber(d.w)
     if not (x and y and z and h and w) then return { ok = false, msg = "ข้อมูลไม่ถูกต้อง" } end
+    local F = Config.Board.Free
     local group = CleanGroup(d.group)
     if not group then return { ok = false, msg = "ชื่อกลุ่มใช้ได้แค่ a-z 0-9 _ -" } end
     if not Near(src, vector3(x, y, z), 40.0) then return { ok = false, msg = "วางไกลตัวเกินไป" } end
-    w = math.max(Config.Board.Free.MinWidth, math.min(Config.Board.Free.MaxWidth, w))
+    w = math.max(F.MinWidth, math.min(F.MaxWidth, w))
+    local ht = math.max(F.MinHeight or 0.3, math.min(F.MaxHeight or 12.0, tonumber(d.ht) or w * 9 / 16))
     local key = "f:" .. NextBoard
     NextBoard = NextBoard + 1
-    local b = { key = key, group = group, kind = "free", x = x, y = y, z = z, h = h % 360.0, w = w }
+    local b = { key = key, group = group, kind = "free", x = x, y = y, z = z, h = h % 360.0, w = w, ht = ht }
     Boards[key] = b
     TriggerClientEvent(script .. ":cl:board", -1, key, b)
     Log("board", src, ("สร้างจอใส `%s` กลุ่ม `%s`"):format(key, group))
@@ -527,7 +999,7 @@ end
 --@ เปลี่ยนทีวีใกล้ตัวเป็นจอวาร์ป
 AdminActions.attachTv = function(src, d)
     local key = type(d.key) == "string" and d.key or nil
-    if not key or key:sub(1, 1) == "f" then return { ok = false, msg = "ไม่พบทีวีใกล้ตัว" } end
+    if not key or key:sub(1, 1) == "f" or key:sub(1, 1) == "c" then return { ok = false, msg = "ไม่พบทีวีใกล้ตัว" } end
     local pos = ScreenPos(key, d.meta)
     if not pos or not Near(src, pos, 10.0) then return { ok = false, msg = "ไม่พบทีวีใกล้ตัว" } end
     if Boards[key] then return { ok = false, msg = "ทีวีนี้เป็นจอวาร์ปอยู่แล้ว" } end
@@ -555,6 +1027,7 @@ end
 
 AdminActions.delete = function(src, d)
     if not Boards[d.key] then return { ok = false, msg = "ไม่พบจอ" } end
+    if Boards[d.key].kind == "config" then return { ok = false, msg = "จอนี้ตั้งใน Config.Screens ลบได้ที่ config.lua" } end
     RemoveBoard(d.key)
     Log("board", src, ("ลบจอวาร์ป `%s`"):format(d.key))
     return AdminActions.list()
@@ -634,15 +1107,28 @@ end)
 --@ ================================================================================================
 lib.callback.register(script .. ":sv:sync", function(src)
     IsAdmin(src)
+    local xPlayer = GetX(src)
+    if xPlayer then Track(src, xPlayer.identifier) end
+    --@ จอส่วนตัว : ส่งเฉพาะจอที่ตัวเองเป็นเจ้าของ/สมาชิก
+    local private = {}
+    for key, p in pairs(Private) do
+        if PrivateRole(src, key) then private[key] = PublicPrivate(p) end
+    end
     local play = {}
-    for key, st in pairs(Play) do play[key] = PublicPlay(st) end
+    for key, st in pairs(Play) do
+        if key:sub(1, 1) ~= "u" or private[key] then play[key] = PublicPlay(st) end
+    end
     local queue = {}
     for group in pairs(Queue) do queue[group] = PruneQueue(group) end
-    return { now = Now(), play = play, props = Props, boards = Boards, queue = queue, calib = Calib }
+    return { now = Now(), play = play, props = Props, boards = Boards, queue = queue, calib = Calib, private = private }
 end)
 
 AddEventHandler("esx:playerLoaded", function(src, xPlayer)
     if xPlayer and Config.AdminGroups[xPlayer.getGroup()] then Admins[src] = true end
+    --@ เปลี่ยนตัวละคร : จอของตัวละครเดิมหาย (เหมือนเจ้าของออกเกม)
+    local old = SrcIdent[src]
+    if xPlayer and old and old ~= xPlayer.identifier and PrivateOf[old] then RemovePrivate(PrivateOf[old]) end
+    if xPlayer then Track(src, xPlayer.identifier) end
     local ident = xPlayer and xPlayer.identifier
     local amount = ident and Refund[ident]
     if amount and amount > 0 then
@@ -658,9 +1144,18 @@ AddEventHandler("playerDropped", function()
     local src = source
     Admins[src] = nil
     RateLast[src] = nil
+    Invites[src] = nil
     for _, p in pairs(Pending) do
         if p.src == src then p.src = nil end
     end
+    --@ เจ้าของออกเกม = จอหาย ; สมาชิกออก = ไม่ต้องรอเขาดูโฆษณา
+    local ident = SrcIdent[src]
+    if ident then
+        if PrivateOf[ident] then RemovePrivate(PrivateOf[ident]) end
+        if IdentSrc[ident] == src then IdentSrc[ident] = nil end
+        SrcIdent[src] = nil
+    end
+    GateForget(src)
 end)
 
 --@ รีสคริปต์ : คืนเงินคนที่ยังรออนุมัติ (ของในคิวหายตอนสคริปต์หยุด)

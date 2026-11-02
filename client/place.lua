@@ -168,51 +168,110 @@ function TV.PlaceProp(modelName)
 end
 
 --@ ================================================================================================
---@ วางจอใส (แอดมิน)
+--@ เล็งวางจอแผ่น : ใช้ทั้งวางจอใส และ /tvpos (หาพิกัดใส่ Config.Screens)
+--@ -> { x, y, z, h, w, ht } / false = ยกเลิก
 --@ ================================================================================================
-function TV.PlaceBoard(group, width)
-    if TV.Busy then return end
-    local F = Config.Board.Free
-    Begin()
+--@ opt.lock = สูงตามกว้าง 16:9 เสมอ / opt.maxDist = ห้ามวางไกลตัวเกินนี้ (กรอบแดง กด Enter ไม่ได้)
+--@ opt.border = ขอบกรอบ (ส่วนของความกว้าง) : ยกจอขึ้นเท่าขอบ ให้ขอบล่างวางบนพื้นพอดี ไม่จมพื้น
+local function AimPanel(title, w, ht, lim, opt)
+    opt = opt or {}
     local ped = PlayerPedId()
     local heading = (GetEntityHeading(ped) + 180.0) % 360.0
-    local w = math.max(F.MinWidth, math.min(F.MaxWidth, width or F.DefaultWidth))
     local zOff = 0.0
 
     TV.Hint({
-        "<b>วางจอใส</b> กลุ่ม: " .. tostring(group),
-        "เมาส์ = เล็งตำแหน่ง",
-        "ลูกกลิ้ง = หมุน (Shift = ละเอียด)",
-        "↑ ↓ = ยก/ลด   ← → = ขนาด",
-        "Enter = วาง   Backspace = ยกเลิก",
+        title,
+        "เมาส์ = เล็งตำแหน่ง   ลูกกลิ้ง = หมุน",
+        opt.lock and "↑ ↓ = ยก/ลด   ← → = ขนาด" or "↑ ↓ = ยก/ลด   ← → = กว้าง   PgUp / PgDn = สูง",
+        opt.lock and "Shift = ละเอียด" or "Shift = ละเอียด   R = กลับเป็น 16:9",
+        "Enter = ตกลง   Backspace = ยกเลิก",
     })
 
     local result = nil
     while result == nil do
         BlockControls()
-        local step = Shift() and 1.0 or 5.0
+        DisableControlAction(0, 10, true)
+        DisableControlAction(0, 11, true)
+        DisableControlAction(0, 45, true)
+        local fine = Shift()
+        local step = fine and 1.0 or 5.0
+        local d = fine and 0.005 or 0.03
         if Pressed(14) then heading = heading - step end
         if Pressed(15) then heading = heading + step end
-        if Held(172) then zOff = zOff + (Shift() and 0.005 or 0.03) end
-        if Held(173) then zOff = zOff - (Shift() and 0.005 or 0.03) end
-        if Held(175) then w = math.min(F.MaxWidth, w + (Shift() and 0.005 or 0.03)) end
-        if Held(174) then w = math.max(F.MinWidth, w - (Shift() and 0.005 or 0.03)) end
+        if Held(172) then zOff = zOff + d end
+        if Held(173) then zOff = zOff - d end
+        if Held(175) then w = math.min(lim.maxW, w + d) end
+        if Held(174) then w = math.max(lim.minW, w - d) end
+        if Held(10) then ht = math.min(lim.maxH, ht + d) end
+        if Held(11) then ht = math.max(lim.minH, ht - d) end
+        if Pressed(45) then ht = math.max(lim.minH, math.min(lim.maxH, w * 9 / 16)) end
+        if opt.lock then ht = w * 9 / 16 end
 
-        local h = w * 9 / 16
         local hit = Raycast(25.0)
-        local c = hit + vector3(0.0, 0.0, h * 0.5 + zOff)
+        local c = hit + vector3(0.0, 0.0, ht * 0.5 + zOff + w * (opt.border or 0.0))
         local fr = TV.HeadingFrame(c.x, c.y, c.z, heading)
-        local a, b, cc, d = TV.Corners(fr, 0.0, 0.0, 0.0, w, h, 1)
-        Outline(a, b, cc, d, 13, 207, 199)
+        local a, b, cc, dd = TV.Corners(fr, 0.0, 0.0, 0.0, w, ht, 1)
+        local far = opt.maxDist and #(GetEntityCoords(ped) - c) > opt.maxDist
+        if far then Outline(a, b, cc, dd, 255, 80, 90) else Outline(a, b, cc, dd, 0, 182, 176) end
+        --@ บอกขนาดตรงกลางจอ
+        SetDrawOrigin(c.x, c.y, c.z, 0)
+        SetTextScale(0.0, 0.32)
+        SetTextFont(4)
+        SetTextCentre(true)
+        SetTextOutline()
+        BeginTextCommandDisplayText("STRING")
+        AddTextComponentSubstringPlayerName(("%.2f x %.2f m"):format(w, ht))
+        EndTextCommandDisplayText(0.0, 0.0)
+        ClearDrawOrigin()
 
         if Pressed(191) then
-            result = { x = c.x, y = c.y, z = c.z, h = heading % 360.0, w = w }
+            if far then
+                TV.Notify("error", "ไกลตัวเกินไป")
+            else
+                result = { x = c.x, y = c.y, z = c.z, h = heading % 360.0, w = w, ht = ht }
+            end
         elseif Pressed(194) or Pressed(202) then
             result = false
         end
         Wait(0)
     end
+    return result
+end
 
+--@ ================================================================================================
+--@ วางจอส่วนตัว (กดใช้ไอเทม Config.Private.Item)
+--@ ================================================================================================
+function TV.PlacePrivate()
+    if TV.Busy or TV.UiOpen then return end
+    local P = Config.Private
+    local w = math.max(P.MinWidth, math.min(P.MaxWidth, P.Width))
+    local lim = { minW = P.MinWidth, maxW = P.MaxWidth, minH = P.MinWidth * 9 / 16, maxH = P.MaxWidth * 9 / 16 }
+    Begin()
+    local r = AimPanel("<b>วางจอส่วนตัว</b> (เห็นเฉพาะคุณ + สมาชิก)", w, w * 9 / 16, lim, { lock = true, maxDist = P.MaxDistance, border = P.Frame and P.Frame.Enable and P.Frame.Border or 0.0 })
+    Finish()
+    if not r then return end
+    local res = lib.callback.await(script .. ":sv:pvPlace", false, r.x, r.y, r.z, r.h, r.w)
+    if res and res.ok then
+        TV.Notify("success", "วางจอแล้ว กด E ที่จอเพื่อเปิดลิงก์ / เพิ่มสมาชิก (กดใช้ไอเทมอีกครั้ง = เก็บ)", 6000)
+    else
+        TV.Notify("error", res and res.msg or "วางไม่สำเร็จ")
+    end
+end
+
+RegisterNetEvent(script .. ":cl:pvPlace", function()
+    TV.PlacePrivate()
+end)
+
+--@ ================================================================================================
+--@ วางจอใส (แอดมิน)
+--@ ================================================================================================
+function TV.PlaceBoard(group, width)
+    if TV.Busy then return end
+    local F = Config.Board.Free
+    local lim = { minW = F.MinWidth, maxW = F.MaxWidth, minH = F.MinHeight or 0.3, maxH = F.MaxHeight or 12.0 }
+    local w = math.max(lim.minW, math.min(lim.maxW, width or F.DefaultWidth))
+    Begin()
+    local result = AimPanel("<b>วางจอใส</b> กลุ่ม: " .. tostring(group), w, math.max(lim.minH, w * 9 / 16), lim)
     Finish()
     if not result then return TV.OpenAdmin("boards") end
     result.group = group
@@ -220,6 +279,25 @@ function TV.PlaceBoard(group, width)
     if res and res.ok then TV.Notify("success", "สร้างจอใสแล้ว") else TV.Notify("error", res and res.msg or "สร้างไม่สำเร็จ") end
     TV.OpenAdmin("boards")
 end
+
+--@ /tvpos : เล็งจอแผ่นแล้วได้บรรทัดสำหรับ Config.Screens (print F8 + ก๊อปให้)
+RegisterCommand(Config.Command.ScreenPos or "tvpos", function(_, args)
+    if TV.Busy or TV.UiOpen then return end
+    local check = lib.callback.await(script .. ":sv:admin", false, "list", {})
+    if not check or not check.ok then return TV.Notify("error", "เฉพาะแอดมิน") end
+    local mode = args[1] == "warp" and "warp" or "tv"
+    local w = 4.0
+    Begin()
+    local r = AimPanel("<b>หาพิกัดจอแผ่น</b> (" .. mode .. ")", w, w * 9 / 16, { minW = 0.2, maxW = 60.0, minH = 0.2, maxH = 60.0 })
+    Finish()
+    if not r then return end
+    local line = ('{ id = "screen_%d", mode = "%s", coords = vector3(%.2f, %.2f, %.2f), heading = %.1f, width = %.2f, height = %.2f%s },')
+        :format(GetCloudTimeAsInt() % 100000, mode, r.x, r.y, r.z, r.h, r.w, r.ht, mode == "warp" and ', group = "warp1"' or "")
+    print("^2[bit_tv] วางบรรทัดนี้ใน Config.Screens :^7")
+    print(line)
+    SendNUIMessage({ action = "copy", text = line })
+    TV.Notify("success", "ก๊อปบรรทัด config แล้ว (ดูใน F8 ด้วย) วางใน Config.Screens แล้วรีสคริปต์", 7000)
+end, false)
 
 --@ ================================================================================================
 --@ แตะจอ : เล็งที่จอแล้วคลิก = คลิกในเบราว์เซอร์ของจอ (กด Skip โฆษณา / ปุ่มในตัวเล่น)
@@ -275,16 +353,19 @@ function TV.Touch(key, mirror)
         BlockControls()
         DisablePlayerFiring(PlayerId(), true)
         local dui = TV.ActiveDui(key)
-        local tl, tr, br, bl = TV.ScreenCornersOf(key)
+        local tl, tr, br, bl, uv = TV.ScreenCornersOf(key)
         if not dui or not tl then
             TV.Notify("error", "จออยู่ไกลเกินไป")
             break
         end
         local u, v, p = HitScreen(tl, tr, br, bl)
         if u then
+            --@ จอแผ่นแบบ cover ตัดขอบ texture : แปลงจุดบนแผ่น -> จุดในเบราว์เซอร์
+            u = uv[1] + u * (uv[2] - uv[1])
+            v = uv[3] + v * (uv[4] - uv[3])
             local x, y = math.floor(u * res.w), math.floor(v * res.h)
             SendDuiMouseMove(dui, x, y)
-            DrawMarker(28, p.x, p.y, p.z, 0, 0, 0, 0, 0, 0, 0.025, 0.025, 0.025, 13, 207, 199, 230, false, false, 2, false, nil, nil, false)
+            DrawMarker(28, p.x, p.y, p.z, 0, 0, 0, 0, 0, 0, 0.025, 0.025, 0.025, 0, 182, 176, 230, false, false, 2, false, nil, nil, false)
             if Pressed(24) then
                 SendDuiMouseDown(dui, "left")
                 down = true

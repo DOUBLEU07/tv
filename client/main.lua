@@ -10,6 +10,8 @@ TV = {
     PropByEnt = {},     --@ [entity] = id
     Boards = {},        --@ [key] = { key, group, kind, x, y, z, h, w }
     Queue = {},         --@ [group] = { { id, post, startAt }, ... }
+    Private = {},       --@ [key "u:<id>"] = { key, x, y, z, h, w, ht, bucket, ownerName } จอส่วนตัวที่เราเป็นเจ้าของ/สมาชิก
+    MyBucket = nil,     --@ มิติของเรา (ถามเซิร์ฟเฉพาะตอนมีจอส่วนตัวอยู่ใกล้)
     Offset = 0.0,       --@ เวลาเซิร์ฟ - เวลาเครื่องเรา (วินาที)
     Personal = Config.Audio.DefaultPersonal,
     UiOpen = false,
@@ -62,7 +64,41 @@ function TV.KeyPos(key)
     elseif kind == "f" then
         local b = TV.Boards[key]
         return b and vector3(b.x, b.y, b.z)
+    elseif kind == "c" then
+        local c = Shared.Screens[key]
+        return c and vector3(c.x, c.y, c.z)
+    elseif kind == "u" then
+        local p = TV.Private[key]
+        return p and vector3(p.x, p.y, p.z)
     end
+end
+
+--@ จอส่วนตัว : เห็นเฉพาะตอนอยู่มิติเดียวกับจอ (จออื่น = true เสมอ)
+function TV.Visible(key)
+    if key:sub(1, 1) ~= "u" then return true end
+    local p = TV.Private[key]
+    return p ~= nil and TV.MyBucket ~= nil and p.bucket == TV.MyBucket
+end
+
+--@ จอแผ่น (ไม่มี entity) : จอใสที่แอดมินวาง / จอจาก Config.Screens / จอส่วนตัว -> { x, y, z, h, w, ht, fit }
+function TV.FlatOf(key)
+    local kind = key:sub(1, 1)
+    if kind == "c" then return Shared.Screens[key] end
+    if kind == "u" then return TV.Private[key] end
+    if kind == "f" then
+        local b = TV.Boards[key]
+        if b then
+            if not b.ht then b.ht = (b.w or Config.Board.Free.DefaultWidth) * 9 / 16 end
+            return b
+        end
+    end
+    return nil
+end
+
+--@ ระยะกด E / คลิก ของจอแผ่น (วัดจากกลางจอ)
+function TV.FlatReach(key, flat)
+    if key:sub(1, 1) == "c" then return flat.range end
+    return Config.InteractDistance + math.max(flat.w or 2.0, flat.ht or 0.0) * 0.5
 end
 
 --@ entity ของจอ (ทีวีในแมพ / prop ที่วาง) ; จอใส = nil
@@ -129,7 +165,87 @@ local function FullSync()
     for id, p in pairs(s.props or {}) do TV.Props[tonumber(id)] = p end
     TV.Calib = {}
     for k, c in pairs(s.calib or {}) do TV.SetCalib(k, c) end
+    TV.Private = s.private or {}
 end
+
+RegisterNetEvent(script .. ":cl:private", function(key, p)
+    TV.Private[key] = p
+    if not p then TV.Play[key] = nil end
+end)
+
+--@ คำเชิญเข้าจอส่วนตัว : กดปุ่มตอบ ไม่เปิด UI ไม่จับเมาส์ ; timeout = nil คือจอถูกเก็บ = ยกเลิกคำเชิญ
+--@ ปุ่มผ่าน RegisterKeyMapping (เดิมอ่าน IsControlJustReleased : โดนสคริปต์อื่นปิด control = กด Y ไม่ติด
+--@ และ "ปล่อยปุ่ม" ที่กดค้างมาตอนพิมพ์แชท/เปิด UI ถูกนับเป็นการตอบ = ปฏิเสธเองทั้งที่ไม่ได้กด)
+local PendingInvite = nil
+
+local function InviteKeyLabel(cmd, fallback)
+    local b = GetControlInstructionalButton(0, joaat(cmd) | 0x80000000, true)
+    if type(b) == "string" and b:sub(1, 2) == "t_" then return b:sub(3) end
+    return fallback
+end
+
+local function ReplyInvite(accept)
+    local inv = PendingInvite
+    if not inv then return end
+    if GetGameTimer() < inv.ready then return end
+    if IsPauseMenuActive() or IsNuiFocused() or TV.UiOpen then return end
+    PendingInvite = nil
+    local res = lib.callback.await(script .. ":sv:pvInviteReply", false, inv.key, accept)
+    if res and res.ok then
+        TV.Notify(accept and "success" or "info", accept and "เข้าร่วมจอทีวีแล้ว" or "ปฏิเสธคำเชิญแล้ว")
+    else
+        TV.Notify("error", res and res.msg or "ไม่สำเร็จ")
+    end
+end
+
+RegisterCommand("+bit_tv_accept", function() ReplyInvite(true) end, false)
+RegisterCommand("-bit_tv_accept", function() end, false)
+RegisterKeyMapping("+bit_tv_accept", "TV : ยอมรับคำเชิญเข้าจอส่วนตัว", "keyboard", Config.Private.Invite.AcceptKey or "Y")
+RegisterCommand("+bit_tv_decline", function() ReplyInvite(false) end, false)
+RegisterCommand("-bit_tv_decline", function() end, false)
+RegisterKeyMapping("+bit_tv_decline", "TV : ปฏิเสธคำเชิญเข้าจอส่วนตัว", "keyboard", Config.Private.Invite.DeclineKey or "BACK")
+
+RegisterNetEvent(script .. ":cl:pvInvite", function(key, ownerName, timeout)
+    if not timeout then
+        if PendingInvite and PendingInvite.key == key then
+            PendingInvite = nil
+            TV.Notify("info", "คำเชิญเข้าจอถูกยกเลิก (เจ้าของเก็บจอแล้ว)")
+        end
+        return
+    end
+    local I = Config.Private.Invite
+    local now = GetGameTimer()
+    local inv = { key = key, expires = now + timeout * 1000, ready = now + (I.Grace or 800) }
+    PendingInvite = inv
+    TV.Notify("info", ("%s เชิญคุณเข้าจอทีวีส่วนตัว : กด %s ยอมรับ / %s ปฏิเสธ"):format(ownerName,
+        InviteKeyLabel("+bit_tv_accept", I.AcceptKey), InviteKeyLabel("+bit_tv_decline", I.DeclineKey)), timeout * 1000)
+    SetTimeout(timeout * 1000, function()
+        if PendingInvite == inv then
+            PendingInvite = nil
+            TV.Notify("error", "คำเชิญเข้าจอหมดเวลาแล้ว")
+        end
+    end)
+end)
+
+--@ มิติของเรา : ถามเซิร์ฟทุก 3 วิ เฉพาะตอนมีจอส่วนตัวอยู่ในระยะ (ไม่มีจอใกล้ = ไม่ถามเลย)
+CreateThread(function()
+    while true do
+        local near = false
+        if next(TV.Private) then
+            local coords = GetEntityCoords(PlayerPedId())
+            for _, p in pairs(TV.Private) do
+                if #(coords - vector3(p.x, p.y, p.z)) <= Config.Render.Distance + 10.0 then near = true break end
+            end
+        end
+        if near then
+            local b = lib.callback.await(script .. ":sv:pvBucket", false)
+            if b ~= nil then TV.MyBucket = b end
+            Wait(3000)
+        else
+            Wait(2000)
+        end
+    end
+end)
 
 RegisterNetEvent(script .. ":cl:calib", function(k, c)
     TV.SetCalib(k, c)
@@ -230,9 +346,17 @@ RegisterNUICallback("musicInfo", function(data, cb)
     cb(true)
 end)
 
+--@ วินาทีของคลิปตอนนี้ : หยุดอยู่ = ตำแหน่งที่หยุด / รอโฆษณา = วินาทีเริ่ม
+function TV.Elapsed(st, now)
+    if st.gate then return st.media.s or 0 end
+    if st.paused then return st.pausePos or 0 end
+    return math.max(0.0, now - st.startAt)
+end
+
 local function RemoteData(key, info)
     local st = info.play
     local media = st and st.media
+    local pv = info.private
     return {
         key = key,
         canControl = info.canControl,
@@ -244,12 +368,24 @@ local function RemoteData(key, info)
             music = media.ao == true,
             audio = Shared.AudioControl[media.p],
             by = st.by,
-            canSeek = Shared.CanSeek(media),
-            elapsed = math.max(0, info.now - st.startAt),
+            canSeek = Shared.CanSeek(media) and not st.gate,
+            canPause = pv ~= nil and Shared.CanSeek(media) and not st.gate,
+            paused = st.paused == true,
+            gate = st.gate and { r = st.gate.r, n = st.gate.n, left = math.max(0, math.ceil(st.gate.endsAt - info.now)) } or nil,
+            waiting = info.waiting,
+            elapsed = TV.Elapsed(st, info.now),
             duration = TV.Duration[key .. "|" .. tostring(st.id)],
         } or nil,
         vol = st and st.vol or info.defaultVolume,
         personal = TV.Personal,
+        private = pv and {
+            owner = pv.owner,
+            memberCtl = pv.memberCtl,
+            max = pv.max,
+            members = pv.members,
+            invites = pv.invites or {},
+            addDistance = pv.addDistance,
+        } or nil,
     }
 end
 
@@ -268,7 +404,39 @@ local function RefreshRemote()
     if info then SendNUIMessage({ action = "update", data = RemoteData(current.key, info) }) end
 end
 
-local function OpenSubmit(key)
+--@ จอส่วนตัว : สถานะเปลี่ยน (คนพ้นโฆษณา / เริ่ม / หยุด) ระหว่างเปิดรีโมทอยู่ = อัปเดตรีโมท
+RegisterNetEvent(script .. ":cl:play", function(key)
+    if current and current.mode == "remote" and current.key == key and key:sub(1, 1) == "u" then RefreshRemote() end
+end)
+
+RegisterNetEvent(script .. ":cl:private", function(key, p)
+    if not p and current and current.key == key and not current.removing then
+        CloseUI()
+        TV.Notify("info", "จอนี้ถูกเก็บแล้ว / คุณไม่ได้เป็นสมาชิกแล้ว")
+    end
+end)
+
+--@ จอใน DUI : เนื้อคลิปเริ่มแล้ว (พ้นโฆษณา) -> บอกเซิร์ฟ ครั้งเดียวต่อคลิป
+local adSent = {}
+RegisterNUICallback("adReady", function(data, cb)
+    cb(true)
+    if type(data) ~= "table" or type(data.rev) ~= "string" or adSent[data.rev] then return end
+    local key, id = data.rev:match("^(u:%d+)|(%d+)$")
+    local st = key and TV.Play[key]
+    if not st or not st.gate or tostring(st.id) ~= id then return end
+    adSent[data.rev] = true
+    TriggerServerEvent(script .. ":sv:adReady", key, tonumber(id))
+end)
+
+local OpenSubmit
+
+--@ เปิด UI ของจอ (กด E / Alt+คลิก ใช้ร่วมกัน)
+function TV.OpenScreen(key)
+    if TV.UiOpen or TV.Busy then return end
+    if TV.Boards[key] then OpenSubmit(key) else OpenRemote(key) end
+end
+
+function OpenSubmit(key)
     local meta = TV.KeyMeta(key)
     local info = lib.callback.await(script .. ":sv:boardInfo", false, key, meta)
     if not info then return TV.Notify("error", "เปิดจอนี้ไม่ได้") end
@@ -298,6 +466,23 @@ local function NearbyTvs()
                     placed = pid ~= nil,
                     dist = math.floor(d * 10 + 0.5) / 10,
                     board = b and b.group or nil,
+                    provider = st and st.media and (Shared.ProviderLabel[st.media.p] or st.media.p) or nil,
+                    url = st and st.media and st.media.url or nil,
+                    by = st and st.by or nil,
+                }
+            end
+        end
+    end
+    for key, c in pairs(Shared.Screens) do
+        if c.mode == "tv" then
+            local d = #(coords - vector3(c.x, c.y, c.z))
+            if d <= range then
+                local st = TV.Play[key]
+                list[#list + 1] = {
+                    key = key,
+                    model = "จอแผ่น " .. c.id,
+                    config = true,
+                    dist = math.floor(d * 10 + 0.5) / 10,
                     provider = st and st.media and (Shared.ProviderLabel[st.media.p] or st.media.p) or nil,
                     url = st and st.media and st.media.url or nil,
                     by = st and st.by or nil,
@@ -344,6 +529,35 @@ RegisterNUICallback("remote", function(data, cb)
         res = lib.callback.await(script .. ":sv:tvVolume", false, key, meta, data.vol)
     elseif data.act == "personal" then
         SetPersonal(tonumber(data.vol) or TV.Personal)
+    elseif data.act == "pause" or data.act == "resume" then
+        res = lib.callback.await(script .. ":sv:tvPause", false, key, meta, data.act == "pause")
+        if res and not res.ok then TV.Notify("error", res.msg or "ไม่สำเร็จ") end
+    elseif data.act == "gateStart" then
+        res = lib.callback.await(script .. ":sv:tvGateStart", false, key, meta)
+        if res and not res.ok then TV.Notify("error", res.msg or "ไม่สำเร็จ") end
+    elseif data.act == "member" then
+        res = lib.callback.await(script .. ":sv:pvMember", false, key, data.op, data.value)
+        if res and not res.ok then TV.Notify("error", res.msg or "ไม่สำเร็จ")
+        elseif res and data.op == "add" then TV.Notify("success", "ส่งคำเชิญแล้ว รอเขากดยอมรับ") end
+    elseif data.act == "leave" and key:sub(1, 1) == "u" then
+        current.removing = true
+        res = lib.callback.await(script .. ":sv:pvLeave", false, key)
+        if res and res.ok then
+            TV.Notify("success", "ออกจากจอแล้ว")
+            CloseUI()
+            return cb(res)
+        end
+        current.removing = nil
+        TV.Notify("error", res and res.msg or "ออกไม่สำเร็จ")
+    elseif data.act == "remove" and key:sub(1, 1) == "u" then
+        current.removing = true
+        res = lib.callback.await(script .. ":sv:pvRemove", false, key)
+        if res and res.ok then
+            TV.Notify("success", "เก็บจอแล้ว")
+            CloseUI()
+            return cb(res)
+        end
+        TV.Notify("error", res and res.msg or "เก็บไม่สำเร็จ")
     elseif data.act == "remove" then
         res = lib.callback.await(script .. ":sv:propRemove", false, tonumber(key:sub(3)))
         if res and res.ok then
@@ -421,14 +635,20 @@ local function FindTarget()
     if key and d <= Config.InteractDistance + 0.5 then
         target = { key = key, coords = GetEntityCoords(ent), dist = d }
     end
-    --@ จอใส
-    for bkey, b in pairs(TV.Boards) do
-        if b.kind == "free" then
-            local bd = #(coords - vector3(b.x, b.y, b.z))
-            if bd <= Config.InteractDistance + (b.w or 2.0) * 0.5 and (not target or bd < target.dist) then
-                target = { key = bkey, coords = vector3(b.x, b.y, b.z), dist = bd }
-            end
+    --@ จอแผ่น : จอใส + จอจาก Config.Screens (กด E ได้ในระยะ InteractDistance + ครึ่งจอ)
+    local function Flat(fkey, f)
+        local fd = #(coords - vector3(f.x, f.y, f.z))
+        local reach = Config.InteractDistance + math.max(f.w or 2.0, f.ht or 0.0) * 0.5
+        if fd <= reach and (not target or fd < target.dist) then
+            target = { key = fkey, coords = vector3(f.x, f.y, f.z), dist = fd, reach = reach }
         end
+    end
+    for bkey, b in pairs(TV.Boards) do
+        if b.kind == "free" then Flat(bkey, TV.FlatOf(bkey)) end
+    end
+    for ckey, c in pairs(Shared.Screens) do Flat(ckey, c) end
+    for pkey, p in pairs(TV.Private) do
+        if TV.Visible(pkey) then Flat(pkey, p) end
     end
     return target
 end
@@ -454,13 +674,13 @@ CreateThread(function()
             if shown ~= target.key .. label then
                 shown = target.key .. label
                 pcall(function()
-                    exports["bit_text3d"]:TogglePressKey({ key = "E", text = label, coords = target.coords, dis = Config.InteractDistance + 1.0, slot = SLOT })
+                    exports["bit_text3d"]:TogglePressKey({ key = "E", text = label, coords = target.coords, dis = (target.reach or Config.InteractDistance) + 1.0, slot = SLOT })
                 end)
             end
             if IsControlJustReleased(0, Config.Key) then
                 local key = target.key
                 target = nil
-                if isBoard then OpenSubmit(key) else OpenRemote(key) end
+                TV.OpenScreen(key)
             end
         elseif shown then
             shown = nil

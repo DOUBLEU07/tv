@@ -41,6 +41,9 @@ var app = new Vue({
         slideVal: 0,
         seekTimer: null,
         seekDelaySec: 1.2,
+        gateBase: 0,
+        gateLeft: 0,
+        addId: null,
         // submit
         form: { img: '', text: '', ig: '', fb: '', tt: '' },
         imgOk: true,
@@ -58,6 +61,7 @@ var app = new Vue({
             return { remote: 'TV', submit: 'ลงวาร์ป', admin: 'TV ADMIN', place: 'วางทีวี' }[this.mode] || 'TV';
         },
         headSub: function () {
+            if (this.mode === 'remote' && this.d.private) return 'จอส่วนตัว · เห็นเฉพาะเจ้าของ + สมาชิก';
             if (this.mode === 'remote') return 'เปิดลิงก์ให้ทุกคนรอบๆ ดูพร้อมกัน';
             if (this.mode === 'submit') return 'กลุ่มจอ #' + (this.d.group || '');
             if (this.mode === 'admin') return 'อนุมัติวาร์ป • จัดการจอ';
@@ -73,6 +77,10 @@ var app = new Vue({
             var p = this.d.playing;
             if (p && p.duration) return Math.max(1, Math.floor(p.duration));
             return Math.max(600, Math.ceil((this.pos + 600) / 60) * 60);
+        },
+        memberFull: function () {
+            var p = this.d.private;
+            return !!p && p.members.length + (p.invites || []).length >= p.max;
         },
         canSubmit: function () {
             var f = this.form;
@@ -91,6 +99,7 @@ var app = new Vue({
             this.busy = false;
             if (mode === 'remote') {
                 this.url = '';
+                this.addId = null;
                 this.vol = this.d.vol != null ? this.d.vol : 60;
                 this.personal = this.d.personal != null ? this.d.personal : 70;
                 this.dragging = false;
@@ -138,9 +147,15 @@ var app = new Vue({
             this.posBase = p ? (p.elapsed || 0) : 0;
             this.posAt = Date.now();
             this.pos = this.posBase;
+            this.gateBase = p && p.gate ? p.gate.left : 0;
+            this.gateLeft = this.gateBase;
         },
+        // หยุดชั่วคราว / รอโฆษณา = เวลาคลิปไม่เดิน
         tickPos: function () {
-            if (this.visible && this.mode === 'remote' && this.d.playing) this.pos = this.posBase + (Date.now() - this.posAt) / 1000;
+            if (!this.visible || this.mode !== 'remote' || !this.d.playing) return;
+            var sec = (Date.now() - this.posAt) / 1000;
+            if (this.d.playing.gate) this.gateLeft = Math.max(0, Math.ceil(this.gateBase - sec));
+            else if (!this.d.playing.paused) this.pos = this.posBase + sec;
         },
         clock: function (s) {
             s = Math.max(0, Math.floor(s || 0));
@@ -177,6 +192,16 @@ var app = new Vue({
         setVol: function () { this.call('remote', { act: 'volume', vol: this.vol }); },
         setPersonal: function () { post('remote', { act: 'personal', vol: this.personal }); playSound('click', 0.25); },
         remove: function () { this.call('remote', { act: 'remove' }); },
+        leave: function () { this.call('remote', { act: 'leave' }); },
+        pause: function (on) { this.call('remote', { act: on ? 'pause' : 'resume' }); },
+        gateStart: function () { this.call('remote', { act: 'gateStart' }); },
+        member: function (op, value) { return this.call('remote', { act: 'member', op: op, value: value }); },
+        addMember: function (id) {
+            var self = this;
+            id = Number(id);
+            if (!id) return;
+            this.member('add', id).then(function (res) { if (res.ok) self.addId = null; });
+        },
 
         // submit
         submit: function () { this.call('submit', this.form); },
@@ -209,7 +234,20 @@ window.addEventListener('message', function (e) {
         if (!app.dragging) app.syncPos();
     }
     else if (m.action === 'hint') app.hint = m.lines;
+    else if (m.action === 'copy') copyText(m.text);
 });
+
+// /tvpos : ก๊อปบรรทัด config (NUI ไม่มี focus ก็ใช้ execCommand ได้)
+function copyText(text) {
+    var el = document.createElement('textarea');
+    el.value = text || '';
+    el.style.position = 'fixed';
+    el.style.opacity = '0';
+    document.body.appendChild(el);
+    el.select();
+    try { document.execCommand('copy'); } catch (e) {}
+    document.body.removeChild(el);
+}
 
 setInterval(function () { app.tickPos(); }, 500);
 
@@ -235,6 +273,19 @@ window.addEventListener('keydown', function (e) {
         place: { models: [{ model: 'prop_tv_flat_01', label: 'ทีวีจอแบน 1' }, { model: 'prop_tv_flat_02', label: 'ทีวีจอแบน 2' }, { model: 'prop_tv_flat_michael', label: 'ทีวีจอใหญ่' }, { model: 'prop_huge_display_01', label: 'จอยักษ์' }] }
     };
     if (demo === 'hint') { app.hint = ['<b>วางจอใส</b> กลุ่ม: bar_a', 'เมาส์ = เล็งตำแหน่ง', 'ลูกกลิ้ง = หมุน (Shift = ละเอียด)', '↑ ↓ = ยก/ลด   ← → = ขนาด', 'Enter = วาง   Backspace = ยกเลิก']; return; }
+    // จอส่วนตัว : ?demo=private (เจ้าของ) / ?demo=private&gate=1 (รอโฆษณา) / ?demo=private&member=1
+    if (demo === 'private') {
+        var gate = /gate=1/.test(location.search), mem = /member=1/.test(location.search);
+        app.open('remote', {
+            canControl: !mem, canRemove: !mem, ownerName: 'Somchai Jaidee',
+            playing: { provider: 'YouTube', url: 'https://www.youtube.com/watch?v=jfKfPfyJRdk', audio: 'volume', by: 'Somchai', canSeek: !gate, canPause: !gate, paused: false, elapsed: 83, duration: 212,
+                       gate: gate ? { r: 2, n: 4, left: 11 } : null, waiting: gate ? ['Nida Dance', 'Kong'] : [] },
+            vol: 60, personal: 70,
+            private: { owner: !mem, memberCtl: false, max: 30, addDistance: 5,
+                       members: [{ mid: 1, name: 'Nida Dance', online: true }, { mid: 2, name: 'Kong', online: true }, { mid: 3, name: 'Fah', online: false }] }
+        });
+        return;
+    }
     if (data[demo]) app.open(demo, data[demo]);
     if (demo === 'submit') { app.form = { img: 'https://picsum.photos/400', text: 'ร้านเหล้าเปิดแล้ว มาดื่มกันคืนนี้!', ig: 'somchai.bit', fb: '', tt: 'somchai_tt' }; }
 })();

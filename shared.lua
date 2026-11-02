@@ -14,6 +14,7 @@ Shared.AudioControl = {
     tiktok = "mute",
     kick = false,
     direct = "volume",
+    image = "none",     --@ ไม่มีเสียง : วาดถึง Render.Distance เหมือนเว็บที่คุมเสียงได้
 }
 
 --@ กรอเวลาได้ (ไลฟ์ / TikTok / Kick / Twitch clip กรอไม่ได้)
@@ -30,6 +31,7 @@ Shared.ProviderLabel = {
     tiktok = "TikTok",
     kick = "Kick",
     direct = "Video",
+    image = "รูปภาพ",
 }
 
 local function Query(url, key)
@@ -141,7 +143,23 @@ Parsers.direct = function(url, host, path)
     return nil
 end
 
-local ORDER = { "youtube", "twitch", "facebook", "tiktok", "kick", "direct" }
+--@ ลิงก์รูปตรงๆ : https เท่านั้น (จออยู่บน https ลิงก์ http โดนบล็อก) + นามสกุลรูปท้าย path (query แบบ discord ?ex= ได้)
+local IMAGE_EXT = { jpg = true, jpeg = true, png = true, gif = true, webp = true }
+Parsers.image = function(url, host, path)
+    if not url:match("^https://") then return nil end
+    local ext = path:lower():match("%.(%w+)$")
+    if not ext or not IMAGE_EXT[ext] then return nil end
+    if url:find("[\"'<>%s\\]") then return nil end
+    local list = Config.TV.ImageDomains or {}
+    if #list == 0 then return { p = "image", src = url } end
+    for _, d in ipairs(list) do
+        d = d:lower()
+        if host == d or host:sub(-(#d + 1)) == "." .. d then return { p = "image", src = url } end
+    end
+    return nil
+end
+
+local ORDER = { "youtube", "twitch", "facebook", "tiktok", "kick", "direct", "image" }
 
 --@ return media | nil, ข้อความ error
 function Shared.ParseMedia(url)
@@ -171,7 +189,11 @@ function Shared.ParseMedia(url)
             end
         end
     end
-    return nil, "รองรับเฉพาะ YouTube / TikTok / Facebook / Twitch / Kick (ลิงก์เต็ม)"
+    if Config.TV.Providers.image and IMAGE_EXT[(path:lower():match("%.(%w+)$") or "")] then
+        return nil, "ลิงก์รูปนี้ใช้ไม่ได้ (ต้องเป็น https และอยู่ในเว็บที่อนุญาต)"
+    end
+    return nil, Config.TV.Providers.image and "รองรับเฉพาะ YouTube / TikTok / Facebook / Twitch / Kick / ลิงก์รูป (ลิงก์เต็ม)"
+        or "รองรับเฉพาะ YouTube / TikTok / Facebook / Twitch / Kick (ลิงก์เต็ม)"
 end
 
 --@ ================================================================================================
@@ -220,4 +242,53 @@ end
 Shared.Models = {}
 for _, m in ipairs(Config.TV.Models) do
     Shared.Models[Shared.ModelHash(m.model)] = m
+end
+--@ รุ่นที่ให้วาง (/tvplace) ต้องเป็นทีวีด้วยเสมอ ไม่งั้นวางแล้วกด E / Alt+คลิก / หาใน /tvadmin ไม่เจอ
+for _, m in ipairs(Config.TV.Place.Models) do
+    local h = Shared.ModelHash(m.model)
+    if not Shared.Models[h] then Shared.Models[h] = { model = m.model } end
+end
+
+--@ ================================================================================================
+--@ จอแผ่นจาก Config.Screens : [key "c:<id>"] = { key, id, mode, x, y, z, h, w, ht, fit, admin, idle, range, group }
+--@ client/server สร้างจาก config ชุดเดียวกัน เลยได้ค่าตรงกันโดยไม่ต้องส่งข้ามกัน
+--@ ================================================================================================
+Shared.Screens = {}
+
+local FITS = { contain = true, cover = true, stretch = true }
+
+local function IdleColor(v)
+    if v == false then return false end
+    if type(v) == "table" then return v end
+    return Config.ScreenIdleColor or { 6, 8, 12, 235 }
+end
+
+for i, s in ipairs(Config.Screens or {}) do
+    local id = type(s.id) == "string" and s.id:lower() or nil
+    local c = s.coords
+    local w, ht = tonumber(s.width), tonumber(s.height)
+    local bad = not id or not id:match("^[%w_%-]+$") or not c or not w or not ht or w <= 0 or ht <= 0
+        or (s.mode ~= "tv" and s.mode ~= "warp")
+    if bad then
+        print(("^1[bit_tv] Config.Screens[%d] ไม่ถูกต้อง (ต้องมี id, mode = \"tv\"/\"warp\", coords, width, height)^0"):format(i))
+    elseif Shared.Screens["c:" .. id] then
+        print(("^1[bit_tv] Config.Screens id \"%s\" ซ้ำ^0"):format(id))
+    else
+        local key = "c:" .. id
+        local group = type(s.group) == "string" and s.group:lower():match("^[%w_%-]+$") and s.group:lower() or id
+        Shared.Screens[key] = {
+            key = key,
+            id = id,
+            mode = s.mode,
+            x = c.x + 0.0, y = c.y + 0.0, z = c.z + 0.0,
+            h = (tonumber(s.heading) or 0.0) % 360.0,
+            w = w + 0.0,
+            ht = ht + 0.0,
+            fit = FITS[s.fit] and s.fit or "contain",
+            admin = s.admin ~= false,
+            idle = IdleColor(s.idle),
+            range = tonumber(s.range) or ((Config.Click and Config.Click.Distance or 8.0) + math.max(w, ht) * 0.5),
+            group = group,
+        }
+    end
 end

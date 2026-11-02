@@ -90,6 +90,13 @@
             if (p.vol > 0) p.yt.unMute(); else p.yt.mute();
             // มีคนกดกรอ = กรอทันที ; ปกติเช็คเวลาเพี้ยนทุก 3 วิ
             var forced = (d.seek || 0) !== p.seek;
+            // จอส่วนตัวหยุดชั่วคราว : ค้างไว้ที่ตำแหน่งที่หยุด
+            if (d.paused) {
+                if (p.yt.getPlayerState() !== 2) p.yt.pauseVideo();
+                if (forced) { p.seek = d.seek || 0; p.yt.seekTo(d.elapsed || 0, true); }
+                report(p);
+                return;
+            }
             if (forced || Date.now() - p.lastDrift > 3000) {
                 p.lastDrift = Date.now();
                 p.seek = d.seek || 0;

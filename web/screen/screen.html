@@ -29,6 +29,10 @@
   #player.vertical { background: radial-gradient(circle at 50% 40%, #1b1f2a, #000 70%); }
   #player.vertical > iframe { left: 50%; width: 405px; transform: translateX(-50%); }
   #player video { object-fit: contain; background: #000; }
+  /* ---------------- รูป : พอดีจอ + พื้นหลังเบลอจากรูปเดียวกัน ---------------- */
+  #player > .pic { background: #000; overflow: hidden; }
+  #player > .pic .pbg { position: absolute; inset: -60px; background-size: cover; background-position: center; filter: blur(40px) brightness(0.5); }
+  #player > .pic img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
   .fb-wrap { display: flex; align-items: center; justify-content: center; }
   /* ---------------- โหมดเพลง ---------------- */
   .music { position: absolute; inset: 0; overflow: hidden; background: #07090f; }
@@ -53,6 +57,14 @@
     background: #05070b; text-align: center; padding: 60px;
   }
   #vmsg.on { display: flex; }
+  /* จอส่วนตัว : ป้ายมุมจอตอนติดโฆษณา / หยุดชั่วคราว */
+  #badge {
+    position: absolute; right: 28px; bottom: 28px; display: none; max-width: 70%;
+    padding: 14px 20px; border-radius: 14px; background: rgba(5, 7, 11, 0.82); box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.08);
+    font-size: 26px; line-height: 1.35; text-align: right; pointer-events: none;
+  }
+  #badge.on { display: block; }
+  #badge b { color: var(--accent); font-weight: 600; }
   #vmsg .big { font-size: 46px; font-weight: 600; }
   #vmsg .small { font-size: 24px; color: var(--ink-dim); }
 
@@ -121,6 +133,7 @@
 <div id="video" class="layer">
   <div id="player"></div>
   <div id="vmsg"><div class="big"></div><div class="small"></div></div>
+  <div id="badge"></div>
 </div>
 
 <div id="board" class="layer">
@@ -173,6 +186,21 @@
     el.classList.add('on');
   }
 
+  // ป้ายมุมจอ (html ที่สร้างเองเท่านั้น ห้ามใส่ข้อความจากผู้เล่น)
+  var badgeHtml = null;
+  function badge(html) {
+    if (html === badgeHtml) return;
+    badgeHtml = html;
+    var el = $('badge');
+    el.innerHTML = html || '';
+    el.classList.toggle('on', !!html);
+  }
+
+  // รอทุกคนพ้นโฆษณา : พร้อม r/n · เหลือ x วิ
+  function gateText(g) {
+    return 'เพื่อนพร้อม <b>' + (g.r | 0) + '/' + (g.n | 0) + '</b> · เริ่มใน <b>' + (g.left | 0) + '</b> วิ';
+  }
+
   // =========================================================================================
   // ตัวเล่นแต่ละเว็บ : { setAudio(vol0to100), sync(elapsed), destroy() }
   // =========================================================================================
@@ -188,6 +216,7 @@
     box.innerHTML = '';
     box.className = '';
     vmsg(null);
+    badge(null);
   }
 
   function iframe(src) {
@@ -257,7 +286,7 @@
         var t = view.querySelectorAll('.mtime span');
         t[0].textContent = clockText(d > 0 ? Math.min(el, d) : el);
         t[1].textContent = d > 0 ? clockText(d) : (info ? 'LIVE' : '');
-        view.classList.toggle('paused', !info || info.error || over || msg.vol <= 0);
+        view.classList.toggle('paused', !info || info.error || over || msg.vol <= 0 || msg.paused === true);
         if (over && shown.indexOf('|END') < 0) { shown += '|END'; view.querySelector('.mlabel').lastChild.textContent = 'จบแล้ว'; }
       }
     };
@@ -313,6 +342,35 @@
     };
     self.duration = function () { return self.ready ? self.yt.getDuration() : 0; };
     self.destroy = function () { if (self.yt && self.yt.destroy) self.yt.destroy(); };
+
+    // จอส่วนตัว : รอทุกคนพ้นโฆษณา
+    // ระหว่างโฆษณา เวลาของคลิปไม่เดิน -> เวลาเริ่มเดิน = เนื้อคลิปเริ่มแล้ว -> หยุดไว้ที่วินาทีเริ่ม แล้วบอกเกม
+    self.held = false;
+    self.lastT = null;
+    self.gate = function (msg) {
+      if (self.ready && !self.held) {
+        var st = self.yt.getPlayerState(), t = self.yt.getCurrentTime();
+        if (st === 1 && self.lastT !== null && t > self.lastT + 0.05) {
+          self.held = true;
+          // ไลฟ์ (ไม่มีความยาว) ไม่ต้องหยุดรอ
+          if (self.yt.getDuration() > 0) { self.yt.pauseVideo(); self.yt.seekTo(msg.elapsed || 0, true); }
+          adReady();
+        }
+        self.lastT = t;
+      }
+      if (self.held) {
+        vmsg('รอเพื่อนดูโฆษณาจบ', '');
+        badge(gateText(msg.gate));
+      } else {
+        badge('โฆษณา? กด <b>E</b> ที่จอ &gt; <b>แตะจอ</b> แล้วกด Skip<br>' + gateText(msg.gate));
+      }
+    };
+    self.ungate = function () { self.held = false; vmsg(null); };
+    self.pause = function (el) {
+      if (!self.ready) return;
+      if (self.yt.getPlayerState() !== 2) self.yt.pauseVideo();
+      if (Math.abs(self.yt.getCurrentTime() - el) > 1) self.yt.seekTo(el, true);
+    };
     return self;
   };
 
@@ -338,7 +396,12 @@
     self.duration = function () { return self.ready && !m.ch ? self.tw.getDuration() : 0; };
     self.sync = function (el, force) {
       if (!self.ready || m.ch) return;
-      if (force || Math.abs(self.tw.getCurrentTime() - el) > 5) self.tw.seek(el);
+      if (force || Math.abs(self.tw.getCurrentTime() - el) > 5) { self.tw.seek(el); if (self.tw.isPaused()) self.tw.play(); }
+    };
+    self.pause = function (el) {
+      if (!self.ready || m.ch) return;
+      if (!self.tw.isPaused()) self.tw.pause();
+      if (Math.abs(self.tw.getCurrentTime() - el) > 2) self.tw.seek(el);
     };
     return self;
   };
@@ -389,6 +452,11 @@
       if (!self.fb) return;
       var d = self.fb.getDuration && self.fb.getDuration();
       if (d && e < d && (force || Math.abs(self.fb.getCurrentPosition() - e) > 5)) { self.fb.seek(e); self.fb.play(); }
+    };
+    self.pause = function (e) {
+      if (!self.fb) return;
+      self.fb.pause();
+      if (Math.abs(self.fb.getCurrentPosition() - e) > 2) self.fb.seek(e);
     };
     return self;
   };
@@ -445,8 +513,30 @@
       if (!isFinite(v.duration) || e > v.duration) return;
       if (force || Math.abs(v.currentTime - e) > 4) { v.currentTime = e; v.play().catch(function () {}); }
     };
+    self.pause = function (e) {
+      if (!v.paused) v.pause();
+      if (isFinite(v.duration) && Math.abs(v.currentTime - e) > 1) v.currentTime = e;
+    };
     self.destroy = function () { if (self.hls) self.hls.destroy(); v.pause(); v.removeAttribute('src'); v.load(); };
     return self;
+  };
+
+  // รูป : ไม่มีเสียง ไม่มีเวลา (sync/setAudio ไม่ต้องมี)
+  Players.image = function (m) {
+    var box = document.createElement('div');
+    box.className = 'pic';
+    var bg = document.createElement('div');
+    bg.className = 'pbg';
+    var img = document.createElement('img');
+    img.alt = '';
+    img.referrerPolicy = 'no-referrer';
+    img.onload = function () { bg.style.backgroundImage = 'url("' + m.src.replace(/["\\]/g, '') + '")'; };
+    img.onerror = function () { vmsg('เปิดรูปนี้ไม่ได้', 'ลิงก์เสีย / หมดอายุ / เว็บไม่ให้ดึงรูป'); };
+    box.appendChild(bg);
+    box.appendChild(img);
+    $('player').appendChild(box);
+    img.src = m.src;
+    return {};
   };
 
   function onVideo(msg) {
@@ -459,10 +549,41 @@
       P = make(msg.media, msg.elapsed || 0, msg.vol || 0, msg) || {};
       lastDrift = Date.now();
       seekId = msg.seek || 0;
+      gated = false;
+      wasPaused = false;
     }
     if (P && P.setAudio) P.setAudio(msg.vol || 0);
     // มีคนกดกรอ = กรอทันที ; ปกติเช็คเวลาเพี้ยนทุก 3 วิ
     var forced = (msg.seek || 0) !== seekId;
+
+    // จอส่วนตัว : รอทุกคนพ้นโฆษณา -> ไม่ sync เวลา (เวลายังไม่เริ่มนับ)
+    if (msg.gate) {
+      gated = true;
+      if (P && P.gate) { try { P.gate(msg); } catch (e) {} }
+      reportDuration();
+      return;
+    }
+    if (gated) {
+      gated = false;
+      forced = true;
+      badge(null);
+      if (P && P.ungate) P.ungate();
+    }
+    // จอส่วนตัว : หยุดชั่วคราว
+    if (msg.paused) {
+      wasPaused = true;
+      seekId = msg.seek || 0;
+      if (P && P.pause) { try { P.pause(msg.elapsed || 0); } catch (e) {} }
+      badge(P && P.pause ? 'หยุดชั่วคราว' : null);
+      if (P && P.tick) P.tick(msg);
+      return;
+    }
+    if (wasPaused) {
+      wasPaused = false;
+      forced = true;
+      badge(null);
+    }
+
     if (P && P.sync && (forced || Date.now() - lastDrift > 3000)) {
       lastDrift = Date.now();
       seekId = msg.seek || 0;
@@ -470,6 +591,17 @@
     }
     if (P && P.tick) P.tick(msg);
     reportDuration();
+  }
+
+  // จอส่วนตัว : เนื้อคลิปเริ่มแล้ว (พ้นโฆษณา) -> บอกเกม (ครั้งเดียวต่อคลิป)
+  var gated = false, wasPaused = false;
+  function adReady() {
+    try {
+      fetch('https://' + RES_NAME + '/adReady', {
+        method: 'POST', headers: { 'Content-Type': 'application/json; charset=UTF-8' },
+        body: JSON.stringify({ rev: rev })
+      }).catch(function () {});
+    } catch (e) {}
   }
 
   // ส่งความยาวคลิปกลับไปให้รีโมท (แถบเลื่อน) ครั้งเดียวต่อคลิป
@@ -571,6 +703,8 @@
     var post = { name: 'Somchai', img: 'https://picsum.photos/600', text: 'ร้านเหล้าเปิดแล้ว มาดื่มกันคืนนี้! โต๊ะว่างเพียบ', ig: 'somchai.bit', fb: 'Somchai Jaidee', tt: 'somchai_tiktok' };
     onBoard({ t: 'board', rev: demo, post: demo === 'empty' ? null : post, remain: 11, dur: 15, next: 3, price: 5000, kind: demo === 'free' ? 'free' : 'tv' });
     if (demo === 'free') document.body.style.background = 'url(https://picsum.photos/1280/720?blur=2) center/cover';
+  } else if (demo === 'img') {
+    onVideo({ t: 'video', rev: 'demo', media: { p: 'image', src: 'https://picsum.photos/600/900' }, elapsed: 0, vol: 0 });
   } else if (demo === 'yt') {
     var demoMedia = { p: 'youtube', id: (location.search.match(/id=([\w-]+)/) || [])[1] || 'jfKfPfyJRdk', ao: /music=1/.test(location.search) };
     onVideo({ t: 'video', rev: 'demo', media: demoMedia, elapsed: 81, vol: 30, info: demoMedia.ao ? { title: 'DAY ONE | MINNIE (G)I-DLE x TorSaksit (Piano & i Live)', author: 'TorBright Channel', d: 213 } : null });
